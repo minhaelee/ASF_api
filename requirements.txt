@@ -1,0 +1,10 @@
+pandas
+numpy
+requests
+python-dotenv
+openai>=1.40
+fastapi
+uvicorn[standard]
+langgraph
+folium
+pydantic>=2
