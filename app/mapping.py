@@ -22,7 +22,7 @@ import folium
 from folium.plugins import MarkerCluster
 
 from app.config import BOUNDARY_PATH, FARMS_PATH, MASTER_GEOCODED_PATH
-from app.geo_normalize import resolve_address
+from app.geo_normalize import farm_coverage_codes, rough_centroid
 from app.grade_stub import STUB_NOTE
 
 GRADE_COLOR = {
@@ -53,42 +53,13 @@ function(cluster) {
 """
 
 
-def _rough_centroid(geometry: dict) -> tuple[float, float]:
-    """폴리곤 좌표 평균으로 대략적인 중심을 구한다(라벨 배치용, 면적 가중 없음)."""
-    coords = []
-
-    def _walk(node):
-        if isinstance(node, (float, int)):
-            return
-        if len(node) == 2 and isinstance(node[0], (float, int)):
-            coords.append(node)
-            return
-        for child in node:
-            _walk(child)
-
-    _walk(geometry["coordinates"])
-    lons = [c[0] for c in coords]
-    lats = [c[1] for c in coords]
-    return sum(lats) / len(lats), sum(lons) / len(lons)
-
-
-def _farm_coverage_codes() -> set[str]:
-    farms = pd.read_csv(FARMS_PATH, encoding="utf-8-sig")
-    codes = set()
-    for addr in farms["주소"]:
-        code = resolve_address(str(addr))
-        if code is not None:
-            codes.add(code)
-    return codes
-
-
 def build_map(state: dict) -> folium.Map:
     grades: dict[str, dict] = state["grades"]
     extracted_cases: list[dict] = state["extracted_cases"]
     as_of = state["as_of"]
 
     history_codes = {c["sgg_code"] for c in extracted_cases if c["sgg_code"] is not None}
-    farm_codes = _farm_coverage_codes()
+    farm_codes = farm_coverage_codes()
     no_farm_data_codes = history_codes - farm_codes
 
     m = folium.Map(location=[36.4, 127.9], zoom_start=7, tiles="cartodbpositron")
@@ -127,7 +98,7 @@ def build_map(state: dict) -> folium.Map:
 
     for code in no_farm_data_codes:
         feature = next(f for f in boundary["features"] if f["properties"]["code"] == code)
-        lat, lon = _rough_centroid(feature["geometry"])
+        lat, lon = rough_centroid(feature["geometry"])
         folium.Marker(
             location=[lat, lon],
             icon=folium.DivIcon(html='<div style="font-size:10px;color:#333;background:white;'

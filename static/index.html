@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>ASF 점검 우선순위 도구</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.1.0/MarkerCluster.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.1.0/MarkerCluster.Default.css" />
+<style>
+  html, body { height: 100%; margin: 0; font-family: -apple-system, "Malgun Gothic", sans-serif; }
+  #header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 16px; border-bottom: 1px solid #ddd; background: #fafafa;
+  }
+  #header h1 { font-size: 15px; margin: 0; }
+  #header label { font-size: 13px; color: #444; }
+  #app { display: flex; height: calc(100% - 45px); }
+  #map { flex: 1; }
+  #panel { width: 400px; overflow-y: auto; padding: 16px; border-left: 1px solid #ddd; font-size: 13px; }
+  #panel h2 { font-size: 16px; margin: 0 0 8px; }
+  #panel h3 { font-size: 13px; color: #555; margin: 16px 0 6px; }
+  .grade-badge { display: inline-block; padding: 2px 8px; border-radius: 3px; color: white; font-weight: bold; }
+  .disclaimer { font-size: 11px; color: #888; margin-top: 4px; }
+  table.farms { width: 100%; border-collapse: collapse; font-size: 12px; }
+  table.farms th, table.farms td { text-align: left; padding: 3px 4px; border-bottom: 1px solid #eee; }
+  .no-data { color: #888; font-style: italic; padding: 8px 0; }
+  .legend-box {
+    position: absolute; bottom: 20px; left: 20px; z-index: 1000;
+    background: white; padding: 8px 12px; border: 1px solid #999; border-radius: 4px; font-size: 12px;
+  }
+  #limitInput { width: 50px; }
+</style>
+</head>
+<body>
+<div id="header">
+  <h1>ASF 점검 우선순위 도구</h1>
+  <label>기준일(as_of): <input type="date" id="asOfInput"></label>
+</div>
+<div id="app">
+  <div id="map"></div>
+  <div id="panel">
+    <div id="panelDefault">
+      <h2>전국 브리핑</h2>
+      <p id="nationalBriefing">불러오는 중...</p>
+    </div>
+    <div id="panelCounty" style="display:none;">
+      <h2 id="countyName"></h2>
+      <p><span id="countyGradeBadge" class="grade-badge"></span> <span id="countyDays"></span></p>
+      <p id="countyBriefing"></p>
+      <div class="disclaimer" id="countyDisclaimer"></div>
+      <h3>등급 근거 (시군 중심 기준)</h3>
+      <p id="countyBasis"></p>
+      <h3>농장 점검 순서 <input type="number" id="limitInput" value="20" min="1" max="200"></h3>
+      <div id="farmListArea"></div>
+    </div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.1.0/leaflet.markercluster.js"></script>
+<script>
+const GRADE_COLOR = { "평시": "#dcdcdc", "주의": "#f4b400", "심각": "#d33f3f" };
+const FARM_DOT_COLOR = "#2b6cb0";
+
+let map, geoJsonLayer, farmClusterLayer, noFarmLabelLayer;
+let gradesByCode = {};
+let boundaryFeaturesByCode = {};
+let selectedCode = null;
+let selectedLayerRef = null;
+
+function todayStr() {
+  const d = new Date();
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+}
+function asOfParam() {
+  return document.getElementById("asOfInput").value.replaceAll("-", "");
+}
+
+function roughCentroid(geometry) {
+  const coords = [];
+  function walk(node) {
+    if (typeof node[0] === "number") { coords.push(node); return; }
+    for (const child of node) walk(child);
+  }
+  walk(geometry.coordinates);
+  let sumLat = 0, sumLon = 0;
+  for (const c of coords) { sumLon += c[0]; sumLat += c[1]; }
+  return [sumLat / coords.length, sumLon / coords.length];
+}
+
+function styleForFeature(feature) {
+  const code = feature.properties.code;
+  const grade = (gradesByCode[code] && gradesByCode[code].grade) || "평시";
+  const isSelected = code === selectedCode;
+  return {
+    fillColor: GRADE_COLOR[grade],
+    color: isSelected ? "#222222" : "#888888",
+    weight: isSelected ? 2.5 : 0.5,
+    fillOpacity: 0.75,
+  };
+}
+
+function initMap() {
+  map = L.map("map").setView([36.4, 127.9], 7);
+  L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
+    attribution: "CARTO / OpenStreetMap",
+  }).addTo(map);
+}
+
+function loadBoundaries() {
+  return fetch("/boundaries").then(r => r.json()).then(geojson => {
+    for (const f of geojson.features) {
+      boundaryFeaturesByCode[f.properties.code] = f;
+    }
+    geoJsonLayer = L.geoJSON(geojson, {
+      style: styleForFeature,
+      onEachFeature: (feature, layer) => {
+        layer.on("click", () => selectCounty(feature.properties.code));
+        layer.bindTooltip(feature.properties.name);
+      },
+    }).addTo(map);
+  });
+}
+
+function loadOutbreaks() {
+  fetch("/outbreaks").then(r => r.json()).then(rows => {
+    for (const row of rows) {
+      L.circle([row.lat, row.lon], {
+        radius: 10000, color: "#d33f3f", weight: 1, fill: false,
+      }).bindTooltip(`${row.case_date} ${row.address}`).addTo(map);
+    }
+  });
+}
+
+function clusterIconFn(cluster) {
+  const count = cluster.getChildCount();
+  const size = count < 10 ? 30 : count < 100 ? 38 : 46;
+  const shade = count < 10 ? "#7fa8d9" : count < 100 ? "#2b6cb0" : "#173d63";
+  return new L.DivIcon({
+    html: `<div style="background:${shade};border-radius:50%;width:${size}px;height:${size}px;` +
+          `display:flex;align-items:center;justify-content:center;color:white;font-weight:bold;` +
+          `font-size:12px;border:2px solid white;box-shadow:0 0 3px rgba(0,0,0,0.4);">${count}</div>`,
+    className: "asf-farm-cluster",
+    iconSize: new L.Point(size, size),
+  });
+}
+
+function loadFarms() {
+  farmClusterLayer = L.markerClusterGroup({ iconCreateFunction: clusterIconFn });
+  fetch("/farms").then(r => r.json()).then(rows => {
+    for (const row of rows) {
+      const label = row.farm_name || "(농장명 미상)";
+      L.circleMarker([row.lat, row.lon], {
+        radius: 3, color: FARM_DOT_COLOR, fill: true, fillOpacity: 0.7,
+      }).bindTooltip(`${row.sigun} ${label}`).addTo(farmClusterLayer);
+    }
+    map.addLayer(farmClusterLayer);
+  });
+}
+
+function renderNoFarmLabels(codes) {
+  if (noFarmLabelLayer) map.removeLayer(noFarmLabelLayer);
+  noFarmLabelLayer = L.layerGroup();
+  for (const code of codes) {
+    const feature = boundaryFeaturesByCode[code];
+    if (!feature) continue;
+    const [lat, lon] = roughCentroid(feature.geometry);
+    L.marker([lat, lon], {
+      icon: L.divIcon({
+        html: '<div style="font-size:10px;color:#333;background:white;padding:1px 3px;' +
+              'border:1px solid #999;border-radius:3px;white-space:nowrap;">농장 데이터 미확보</div>',
+        className: "asf-no-farm-label",
+      }),
+    }).addTo(noFarmLabelLayer);
+  }
+  noFarmLabelLayer.addTo(map);
+}
+
+function loadGrades() {
+  const asOf = asOfParam();
+  return fetch(`/pipeline/run?as_of=${asOf}`).then(r => r.json()).then(data => {
+    gradesByCode = data.grades;
+    if (geoJsonLayer) geoJsonLayer.eachLayer(layer => layer.setStyle(styleForFeature(layer.feature)));
+    renderNoFarmLabels(data.no_farm_data_codes);
+    document.getElementById("nationalBriefing").textContent = data.briefing.text;
+    return data;
+  });
+}
+
+function setGradeBadge(grade) {
+  const el = document.getElementById("countyGradeBadge");
+  el.textContent = grade;
+  el.style.background = GRADE_COLOR[grade];
+}
+
+function renderFarmList(status, farmsList) {
+  const area = document.getElementById("farmListArea");
+  if (status === "no_farm_data") {
+    area.innerHTML = '<div class="no-data">농장 데이터 미확보</div>';
+    return;
+  }
+  if (farmsList.length === 0) {
+    area.innerHTML = '<div class="no-data">조건에 맞는 농장 없음 (최근 3주 내 10km 이내 발생 없음)</div>';
+    return;
+  }
+  let html = '<table class="farms"><tr><th>농장명</th><th>거리</th><th>사육두수</th></tr>';
+  for (const f of farmsList) {
+    const head = f["사육두수"] === null ? "미상" : f["사육두수"].toLocaleString();
+    html += `<tr><td>${f.farm_name || "(미상)"}</td><td>${f.distance_km}km</td><td>${head}</td></tr>`;
+  }
+  html += "</table>";
+  area.innerHTML = html;
+}
+
+function selectCounty(code) {
+  const prevSelected = selectedCode;
+  selectedCode = code;
+  if (geoJsonLayer) geoJsonLayer.eachLayer(l => {
+    if (l.feature.properties.code === prevSelected || l.feature.properties.code === code) {
+      l.setStyle(styleForFeature(l.feature));
+    }
+  });
+
+  document.getElementById("panelDefault").style.display = "none";
+  document.getElementById("panelCounty").style.display = "block";
+
+  const asOf = asOfParam();
+  const limit = document.getElementById("limitInput").value || 20;
+  fetch(`/sigun/${code}?as_of=${asOf}&limit=${limit}`).then(r => r.json()).then(data => {
+    document.getElementById("countyName").textContent = data.name;
+    setGradeBadge(data.grade.grade);
+    document.getElementById("countyDays").textContent =
+      data.grade.days_since_last === null ? "(자기 시군 발생 이력 없음)" : `자기 시군 최근 발생 ${data.grade.days_since_last}일 전`;
+    document.getElementById("countyBriefing").textContent = data.briefing.text;
+    document.getElementById("countyDisclaimer").textContent = data.briefing.disclaimer;
+
+    if (data.nearest_case_basis) {
+      const b = data.nearest_case_basis;
+      document.getElementById("countyBasis").textContent =
+        `${b.address} (${b.distance_km}km, ${b.days_since}일 전) — ${b.note}`;
+    } else {
+      document.getElementById("countyBasis").textContent =
+        "시군 중심 기준 10km 이내에는 최근 3주 내 발생 없음 (등급은 시군 전체 기준이라 중심에서 먼 지점의 발생일 수 있음 — 아래 농장 목록 참고)";
+    }
+
+    renderFarmList(data.farm_status, data.farms);
+  });
+}
+
+document.getElementById("asOfInput").addEventListener("change", () => {
+  loadGrades().then(() => {
+    if (selectedCode) selectCounty(selectedCode);
+  });
+});
+document.getElementById("limitInput").addEventListener("change", () => {
+  if (selectedCode) selectCounty(selectedCode);
+});
+
+document.getElementById("asOfInput").value = todayStr();
+initMap();
+loadOutbreaks();
+loadFarms();
+loadBoundaries().then(() => loadGrades());
+</script>
+</body>
+</html>

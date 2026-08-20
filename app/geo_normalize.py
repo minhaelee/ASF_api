@@ -17,7 +17,9 @@
 import json
 import sys
 
-from app.config import BOUNDARY_PATH
+import pandas as pd
+
+from app.config import BOUNDARY_PATH, FARMS_PATH
 
 # 2018년 시도명 -> SGIS 2자리 코드. skorea-provinces-2018-geo.json에서 실측 확인.
 PROVINCE_CODE_2018 = {
@@ -85,12 +87,14 @@ def _load_boundary_features() -> list[dict]:
 _FEATURES = _load_boundary_features()
 _BY_SIDO_CODE_AND_NAME: dict[tuple[str, str], str] = {}
 _CODE_TO_NAME: dict[str, str] = {}
+_CODE_TO_GEOMETRY: dict[str, dict] = {}
 for _f in _FEATURES:
     _p = _f["properties"]
     _code = _p["code"]
     _name = _p["name"]
     _BY_SIDO_CODE_AND_NAME[(_code[:2], _name)] = _code
     _CODE_TO_NAME[_code] = _name
+    _CODE_TO_GEOMETRY[_code] = _f["geometry"]
 
 
 def resolve_sgg_code(sido_raw: str, sigun_raw: str) -> str | None:
@@ -175,6 +179,53 @@ def parse_address_prefix(address: str) -> tuple[str, str, str]:
     sido, sigun = parts[0], parts[1]
     rest = parts[2] if len(parts) > 2 else ""
     return sido, sigun, rest
+
+
+def rough_centroid(geometry: dict) -> tuple[float, float]:
+    """폴리곤 좌표 평균으로 대략적인 중심을 구한다(라벨 배치·거리 기준점용, 면적 가중 없음).
+
+    v1.1 지도(app/mapping.py)의 라벨 배치용이었다가, v2에서 nearest_case.py의 "시군 중심
+    기준 최근 발생 거리" 계산에도 쓰이게 되어 이쪽으로 hoist했다. 소비처가 mapping.py,
+    nearest_case.py 둘이 됨.
+    """
+    coords = []
+
+    def _walk(node):
+        if isinstance(node, (float, int)):
+            return
+        if len(node) == 2 and isinstance(node[0], (float, int)):
+            coords.append(node)
+            return
+        for child in node:
+            _walk(child)
+
+    _walk(geometry["coordinates"])
+    lons = [c[0] for c in coords]
+    lats = [c[1] for c in coords]
+    return sum(lats) / len(lats), sum(lons) / len(lons)
+
+
+def centroid_for_code(code: str) -> tuple[float, float] | None:
+    geometry = _CODE_TO_GEOMETRY.get(code)
+    if geometry is None:
+        return None
+    return rough_centroid(geometry)
+
+
+def farm_coverage_codes() -> set[str]:
+    """farms_geocoded.csv 각 행의 주소를 resolve_address로 조인한 시군 코드 집합(~53개).
+
+    v1.1 지도(app/mapping.py)의 "농장 데이터 미확보" 라벨 판정용이었다가, v2에서
+    `/sigun/{code}`(농장 있는 시군/없는 시군 구분)와 farm_order.py(후보 시군 필터링)도
+    필요해져 이쪽으로 hoist했다.
+    """
+    farms = pd.read_csv(FARMS_PATH, encoding="utf-8-sig")
+    codes = set()
+    for addr in farms["주소"]:
+        code = resolve_address(str(addr))
+        if code is not None:
+            codes.add(code)
+    return codes
 
 
 if __name__ == "__main__":

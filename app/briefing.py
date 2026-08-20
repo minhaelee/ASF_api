@@ -59,6 +59,47 @@ def generate_briefing(as_of: str, grades: dict[str, dict]) -> dict:
     }
 
 
+def generate_county_briefing(sigun_name: str, grade_info: dict, nearest_case_info: dict | None) -> dict:
+    """시군 상세 패널 ①(선택 상태)용 1~3문장 브리핑. 반환 모양은 generate_briefing과 동일
+    ({"text", "disclaimer"}) — grade_info가 여전히 grade_stub 산출물이므로 시군 단위
+    브리핑이라고 스텁 경고가 빠지면 안 된다.
+    """
+    if not OPENAI_API_KEY:
+        sys.exit("OPENAI_API_KEY 환경변수가 없습니다. .env를 확인하세요.")
+
+    if nearest_case_info is None:
+        nearest_line = (
+            "시군 중심 기준 10km 이내에는 최근 3주 내 발생이 없음 "
+            "(단, 등급은 시군 전체 기준이라 중심에서 먼 지점의 발생일 수 있음 — 농장 목록 참고)"
+        )
+    else:
+        nearest_line = (
+            f"가장 가까운 최근 발생: {nearest_case_info['address']} "
+            f"({nearest_case_info['distance_km']}km, {nearest_case_info['days_since']}일 전)"
+        )
+
+    client = OpenAI(api_key=OPENAI_API_KEY)
+    instructions = (
+        "너는 ASF(아프리카돼지열병) 방역 담당 공무원을 위한 시군 단위 브리핑 문장을 쓴다. "
+        "주어진 정보만 문장으로 서술할 것. 목록에 없는 시군을 언급하거나 순서를 바꾸지 말 것. "
+        "1~3문장의 한국어로 작성하라."
+    )
+    input_text = (
+        f"시군: {sigun_name}\n"
+        f"등급: {grade_info['grade']}\n"
+        f"경과일(자기 시군 최근 발생 기준): {grade_info['days_since_last']}\n"
+        f"{nearest_line}"
+    )
+
+    resp = client.responses.create(
+        model=OPENAI_BRIEFING_MODEL,
+        instructions=instructions,
+        input=input_text,
+    )
+
+    return {"text": resp.output_text, "disclaimer": STUB_NOTE}
+
+
 if __name__ == "__main__":
     sys.stdout.reconfigure(encoding="utf-8")
     from app.extraction import extract_cases

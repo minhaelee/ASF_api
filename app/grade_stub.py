@@ -17,17 +17,13 @@
 관여하지 않는다는 원칙(작업지시서 원칙 3)을 코드 구조로도 보장하기 위함이다.
 """
 
-from datetime import date, timedelta
+from app.date_utils import parse_yyyymmdd
 
 IS_STUB = True
 STUB_NOTE = "임시 등급 함수 — 자기 시군 최근성만 반영, 반경 10km 로직 없음. T2 완성 후 교체 예정."
 
 SIM_THRESHOLD_DAYS = 21
 JUJUI_THRESHOLD_DAYS = 90
-
-
-def _parse_yyyymmdd(s: str) -> date:
-    return date(int(s[0:4]), int(s[4:6]), int(s[6:8]))
 
 
 def grade(sigun_code: str, as_of: str, cases: list[dict]) -> dict:
@@ -37,11 +33,11 @@ def grade(sigun_code: str, as_of: str, cases: list[dict]) -> dict:
     반환: {"grade": "평시"|"주의"|"심각", "is_stub": True, "note": STUB_NOTE,
            "matched_cases": [...], "days_since_last": int|None}
     """
-    as_of_date = _parse_yyyymmdd(as_of)
+    as_of_date = parse_yyyymmdd(as_of)
 
     relevant = [
         c for c in cases
-        if c.get("sgg_code") == sigun_code and _parse_yyyymmdd(c["case_date"]) <= as_of_date
+        if c.get("sgg_code") == sigun_code and parse_yyyymmdd(c["case_date"]) <= as_of_date
     ]
 
     if not relevant:
@@ -54,7 +50,7 @@ def grade(sigun_code: str, as_of: str, cases: list[dict]) -> dict:
         }
 
     latest = max(relevant, key=lambda c: c["case_date"])
-    days_since = (as_of_date - _parse_yyyymmdd(latest["case_date"])).days
+    days_since = (as_of_date - parse_yyyymmdd(latest["case_date"])).days
 
     if days_since <= SIM_THRESHOLD_DAYS:
         g = "심각"
