@@ -11,8 +11,12 @@ NOTES_T3.md(T1이 남긴 메모): farms_geocoded.csv에 동일 좌표 166그룹(
 점이 없다 — 폴리곤 중심에 "농장 데이터 미확보" 라벨을 얹어 빈 지도가 아니라 "데이터가
 없다"는 사실 자체를 보여준다.
 
-10km 원은 표시 전용이다: 지금 등급(grade_stub)은 반경 계산을 하지 않으므로, 원이 있다고
-해서 그 반경이 등급에 반영됐다는 뜻이 아니다 — 지도 위 안내 문구로 이 점을 명시한다.
+10km 원은 표시 전용이다 — 지도 위 안내 문구에 실제 등급 판정 방식(app.grade.GRADE_METHOD_NOTE)을
+그대로 보여준다.
+
+**주의(레거시)**: 이 folium 지도(/map)는 v2 때 만든 대조용 화면이고, v3 이후 주 화면은
+static/index.html(좌우 2단 대시보드)이다. 등급 로직은 app.grade로 최신화됐지만 화면
+자체(choropleth+마커+원)는 새로 손보지 않았다.
 """
 
 import json
@@ -23,7 +27,7 @@ from folium.plugins import MarkerCluster
 
 from app.config import BOUNDARY_PATH, FARMS_PATH, MASTER_GEOCODED_PATH
 from app.geo_normalize import farm_coverage_codes, rough_centroid
-from app.grade_stub import STUB_NOTE
+from app.grade import GRADE_METHOD_NOTE
 
 GRADE_COLOR = {
     "평시": "#dcdcdc",
@@ -147,9 +151,9 @@ def build_map(state: dict) -> folium.Map:
       &nbsp;<span style="color:{GRADE_COLOR['주의']}">■</span> 주의
       &nbsp;<span style="color:{GRADE_COLOR['심각']}">■</span> 심각<br>
       <hr style="margin:4px 0;">
-      <b>임시 등급 함수:</b> {STUB_NOTE}<br>
-      <b>10km 원:</b> 발생 지점 표시 전용 — 현재 등급 계산(자기 시군 최근성)에는
-      반경이 반영되지 않는다.<br>
+      <b>등급 판정 방식:</b> {GRADE_METHOD_NOTE}<br>
+      <b>10km 원:</b> 발생 지점 표시 전용(법정 방역대 시각화). 실제 등급은 시군
+      "경계"까지의 최단거리 기준이라, 이 원과 정확히 겹치진 않는다.<br>
       <b>농장 점:</b> 발생 이력 {len(history_codes)}개 시군 중 {len(history_codes & farm_codes)}개 시군만 확보
       (나머지 {len(no_farm_data_codes)}개는 위 라벨로 표시), 지자체 공개 여부에 따른 선택 편향 있음.
       등급/검증 계산에는 쓰이지 않는다.<br>

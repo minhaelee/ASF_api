@@ -212,6 +212,12 @@ def centroid_for_code(code: str) -> tuple[float, float] | None:
     return rough_centroid(geometry)
 
 
+def geometry_for_code(code: str) -> dict | None:
+    """시군구 코드 -> GeoJSON geometry dict. app/grade.py, app/nearest_case.py가
+    폴리곤 경계까지 최단거리(app.geo_distance.point_to_polygon_distance_km)를 잴 때 쓴다."""
+    return _CODE_TO_GEOMETRY.get(code)
+
+
 def farm_coverage_codes() -> set[str]:
     """farms_geocoded.csv 각 행의 주소를 resolve_address로 조인한 시군 코드 집합(~53개).
 

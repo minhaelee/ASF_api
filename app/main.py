@@ -13,11 +13,10 @@ from fastapi.staticfiles import StaticFiles
 
 from app.briefing import generate_county_briefing
 from app.config import BOUNDARY_PATH, MASTER_GEOCODED_PATH, FARMS_PATH
-from app.constants import DEFAULT_FARM_ORDER_LIMIT
+from app.constants import DEFAULT_FARM_ORDER_LIMIT, WARNING_RADIUS_KM
 from app.farm_order import farm_order
 from app.geo_normalize import code_to_name, farm_coverage_codes
 from app.mapping import build_map
-from app.nearest_case import nearest_recent_case
 from app.pipeline import run_pipeline
 
 app = FastAPI(title="ASF 점검 우선순위 도구 — T3 v2")
@@ -53,6 +52,7 @@ def pipeline_run(as_of: str | None = None):
             "grade": g["grade"],
             "is_stub": g["is_stub"],
             "days_since_last": g["days_since_last"],
+            "nearest_distance_km": g["nearest_distance_km"],
         }
         for code, g in state["grades"].items()
     }
@@ -71,7 +71,7 @@ def pipeline_run(as_of: str | None = None):
         "grade_meta": state["grade_meta"],
         "briefing": state["briefing"],
         "meta": {
-            "pipeline_is_stub": True,
+            "pipeline_is_stub": state["grade_meta"]["is_stub"],
             "disclaimer": state["grade_meta"]["note"],
         },
     }
@@ -135,12 +135,24 @@ def sigun_detail(code: str, as_of: str | None = None, limit: int = DEFAULT_FARM_
     state = run_pipeline(as_of)
     grade_info = state["grades"][code]
 
-    nc = nearest_recent_case(code, as_of)
+    # 등급 판정에 쓰인 것과 같은 계산(app.grade)에서 그대로 뽑아온다 — 예전엔 시군
+    # 중심점 기준으로 따로 계산해서 등급 근거와 농장 목록 거리가 안 맞을 수 있었는데,
+    # 이제 grade()가 이미 폴리곤 경계 기준 최단거리를 계산해두므로 그걸 재사용한다.
+    # WARNING_RADIUS_KM(20km)보다 멀면 "근거로 보여줄 만큼 가깝지 않다"고 보고 숨긴다
+    # (평시 시군도 항상 "가장 가까운" 케이스는 있으므로, 컷오프 없이 그대로 노출하면
+    # 수백 km 밖 사례가 "근거"처럼 보이는 오독이 생긴다).
+    nc = None
     nearest_case_basis = None
-    if nc is not None:
+    if grade_info["nearest_distance_km"] is not None and grade_info["nearest_distance_km"] <= WARNING_RADIUS_KM:
+        nc = {
+            "case_date": grade_info["nearest_case"]["case_date"],
+            "address": grade_info["nearest_case"]["address"],
+            "distance_km": grade_info["nearest_distance_km"],
+            "days_since": grade_info["days_since_last"],
+        }
         nearest_case_basis = {
             **nc,
-            "note": "농장 목록의 거리와는 기준점이 달라(시군 중심 vs 개별 농장) 정확히 일치하지 않을 수 있음",
+            "note": "시군 경계 기준 거리 — 개별 농장은 시군 안쪽에 있으므로 농장 목록의 거리는 이 값 이상이다",
         }
 
     has_farms = code in farm_coverage_codes()

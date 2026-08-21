@@ -3,9 +3,8 @@
 작업지시서 원칙 3: LLM은 등급 판정에 절대 관여하지 않는다. 이 모듈은 Node2가 이미 계산한
 grades를 문장으로 요약할 뿐, 등급 자체를 다시 계산하거나 뒤집지 않는다.
 
-"임시 등급 함수" 경고는 LLM 문장에 맡기지 않는다 — briefing() 반환값의 disclaimer는
-grade_stub.STUB_NOTE를 그대로 넣은 별도 필드라서, LLM이 문장을 다듬다가 빠뜨려도
-API/지도 응답에는 항상 남는다.
+등급 판정 방식 설명(GRADE_METHOD_NOTE)은 LLM 문장에 맡기지 않는다 — briefing() 반환값의
+disclaimer는 별도 필드라서, LLM이 문장을 다듬다가 빠뜨려도 API/지도 응답에는 항상 남는다.
 """
 
 import sys
@@ -13,7 +12,7 @@ import sys
 from openai import OpenAI
 
 from app.config import OPENAI_API_KEY, OPENAI_BRIEFING_MODEL
-from app.grade_stub import STUB_NOTE
+from app.grade import GRADE_METHOD_NOTE
 from app.geo_normalize import code_to_name
 
 
@@ -27,7 +26,7 @@ def _summarize_grades(grades: dict[str, dict]) -> str:
 
 
 def generate_briefing(as_of: str, grades: dict[str, dict]) -> dict:
-    """반환: {"text": str, "is_stub_pipeline": True, "disclaimer": STUB_NOTE}"""
+    """반환: {"text": str, "is_stub_pipeline": False, "disclaimer": GRADE_METHOD_NOTE}"""
     if not OPENAI_API_KEY:
         sys.exit("OPENAI_API_KEY 환경변수가 없습니다. .env를 확인하세요.")
 
@@ -54,24 +53,24 @@ def generate_briefing(as_of: str, grades: dict[str, dict]) -> dict:
         "text": resp.output_text,
         "as_of": as_of,
         "counts": {"심각": n_sim, "주의": n_juju},
-        "is_stub_pipeline": True,
-        "disclaimer": STUB_NOTE,
+        "is_stub_pipeline": False,
+        "disclaimer": GRADE_METHOD_NOTE,
     }
 
 
 def generate_county_briefing(sigun_name: str, grade_info: dict, nearest_case_info: dict | None) -> dict:
     """시군 상세 패널 ①(선택 상태)용 1~3문장 브리핑. 반환 모양은 generate_briefing과 동일
-    ({"text", "disclaimer"}) — grade_info가 여전히 grade_stub 산출물이므로 시군 단위
-    브리핑이라고 스텁 경고가 빠지면 안 된다.
-    """
+    ({"text", "disclaimer"})."""
     if not OPENAI_API_KEY:
         sys.exit("OPENAI_API_KEY 환경변수가 없습니다. .env를 확인하세요.")
 
+    # nearest_case_info는 호출부(app/main.py)가 WARNING_RADIUS_KM(20km) 안일 때만 넘긴다.
+    # None이면 "가까운 발생 없음"이라는 뜻이므로, grade_info['days_since_last'](수백 km
+    # 밖 케이스의 경과일일 수 있음)를 여기서 같이 넘기면 "근거는 없다면서 경과일은 있다"는
+    # 모순된 입력이 돼 LLM이 혼란스러운 문장을 쓴다 — 실측으로 확인된 문제라, 경과일도
+    # nearest_case_info가 있을 때만 프롬프트에 넣는다.
     if nearest_case_info is None:
-        nearest_line = (
-            "시군 중심 기준 10km 이내에는 최근 3주 내 발생이 없음 "
-            "(단, 등급은 시군 전체 기준이라 중심에서 먼 지점의 발생일 수 있음 — 농장 목록 참고)"
-        )
+        nearest_line = "최근 3주 내 시군 경계 20km 이내 발생 없음"
     else:
         nearest_line = (
             f"가장 가까운 최근 발생: {nearest_case_info['address']} "
@@ -84,12 +83,7 @@ def generate_county_briefing(sigun_name: str, grade_info: dict, nearest_case_inf
         "주어진 정보만 문장으로 서술할 것. 목록에 없는 시군을 언급하거나 순서를 바꾸지 말 것. "
         "1~3문장의 한국어로 작성하라."
     )
-    input_text = (
-        f"시군: {sigun_name}\n"
-        f"등급: {grade_info['grade']}\n"
-        f"경과일(자기 시군 최근 발생 기준): {grade_info['days_since_last']}\n"
-        f"{nearest_line}"
-    )
+    input_text = f"시군: {sigun_name}\n등급: {grade_info['grade']}\n{nearest_line}"
 
     resp = client.responses.create(
         model=OPENAI_BRIEFING_MODEL,
@@ -97,18 +91,16 @@ def generate_county_briefing(sigun_name: str, grade_info: dict, nearest_case_inf
         input=input_text,
     )
 
-    return {"text": resp.output_text, "disclaimer": STUB_NOTE}
+    return {"text": resp.output_text, "disclaimer": GRADE_METHOD_NOTE}
 
 
 if __name__ == "__main__":
     sys.stdout.reconfigure(encoding="utf-8")
-    from app.extraction import extract_cases
     from app.geo_normalize import all_sgg_codes
-    from app.grade_stub import grade
+    from app.grade import grade
 
     as_of = "20260815"
-    cases, _ = extract_cases()
-    grades = {code: grade(code, as_of, cases) for code in all_sgg_codes()}
+    grades = {code: grade(code, as_of) for code in all_sgg_codes()}
     result = generate_briefing(as_of, grades)
     print(result["text"])
     print()

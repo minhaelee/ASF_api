@@ -1,8 +1,10 @@
-"""ASF T3 — LangGraph 3노드: 문서 구조화 추출 -> 등급 판정(임시 함수) -> 브리핑 생성.
+"""ASF T3 — LangGraph 3노드: 문서 구조화 추출 -> 등급 판정 -> 브리핑 생성.
 
-state 흐름: Node1이 만든 extracted_cases를 Node2가 그대로 받아 전국 시군마다
-grade_stub.grade(sigun_code, as_of, extracted_cases)를 부른다(반경 로직이 있는 진짜
-T2 함수로 바뀌어도 호출부는 그대로 — grade_stub.py 안쪽만 바뀌는 구조).
+Node2는 이제(T2, v3) 진짜 grade(sigun_code, as_of)를 부른다 — 좌표는 grade.py가
+발생 마스터 지오코딩 결과에서 직접 읽으므로 extracted_cases를 등급 계산에 넘기지
+않는다. extracted_cases는 여전히 Node3 이전 단계 상태로 남아있지만(어떤 시군에 발생
+이력이 있는지 등, mapping.py/main.py의 "농장 데이터 미확보" 판정에 쓰임), grade() 호출
+자체는 이제 as_of와 sigun_code 2개만 받는다.
 """
 
 from typing import TypedDict
@@ -12,7 +14,7 @@ from langgraph.graph import StateGraph, START, END
 from app.briefing import generate_briefing
 from app.extraction import extract_cases
 from app.geo_normalize import all_sgg_codes
-from app.grade_stub import grade
+from app.grade import GRADE_METHOD_NOTE, grade
 
 
 class PipelineState(TypedDict, total=False):
@@ -31,16 +33,15 @@ def node1_extract(state: PipelineState) -> dict:
 
 def node2_grade(state: PipelineState) -> dict:
     as_of = state["as_of"]
-    cases = state["extracted_cases"]
 
     codes = all_sgg_codes()
-    grades = {code: grade(code, as_of, cases) for code in codes}
+    grades = {code: grade(code, as_of) for code in codes}
 
     return {
         "grades": grades,
         "grade_meta": {
-            "is_stub": True,
-            "note": next(iter(grades.values()))["note"] if grades else "",
+            "is_stub": False,
+            "note": GRADE_METHOD_NOTE,
             "county_count": len(codes),
         },
     }

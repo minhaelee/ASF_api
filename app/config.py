@@ -15,6 +15,7 @@ BOUNDARY_PATH = f"{DATA_DIR}/boundaries/skorea-municipalities-2018-geo.json"
 MASTER_PATH = f"{DATA_DIR}/asf_master_v1.csv"
 MASTER_GEOCODED_PATH = f"{DATA_DIR}/asf_master_v1_geocoded.csv"
 FARMS_PATH = f"{DATA_DIR}/farms_geocoded.csv"
+LIVESTOCK_STATS_PATH = f"{DATA_DIR}/18년-26년+전국+시군별+일반돼지+사육규모+통계.csv"
 
 CACHE_DIR = ".cache"
 EXTRACTION_CACHE_PATH = f"{CACHE_DIR}/case_extraction.json"

@@ -8,3 +8,4 @@ uvicorn[standard]
 langgraph
 folium
 pydantic>=2
+shapely
