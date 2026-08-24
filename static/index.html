@@ -35,6 +35,7 @@
 <div id="header">
   <h1>ASF 점검 우선순위 도구</h1>
   <label>기준일(as_of): <input type="date" id="asOfInput"></label>
+  <span id="refreshStatus" style="margin-left:auto; font-size:12px; color:#666;">갱신 상태 확인 중...</span>
 </div>
 <div id="app">
   <div id="map"></div>
@@ -176,6 +177,24 @@ function renderNoFarmLabels(codes) {
   noFarmLabelLayer.addTo(map);
 }
 
+function loadRefreshStatus() {
+  fetch("/refresh_status").then(r => r.json()).then(data => {
+    const el = document.getElementById("refreshStatus");
+    if (!data.checked_at) {
+      el.textContent = "마지막 갱신: 아직 없음";
+      return;
+    }
+    const t = new Date(data.checked_at).toLocaleString("ko-KR");
+    if (data.error) {
+      el.textContent = `마지막 갱신 시도: ${t} (실패 — 기존 데이터로 동작 중: ${data.error})`;
+      el.style.color = "#b45309";
+    } else {
+      el.textContent = `마지막 갱신: ${t}${data.added > 0 ? ` (신규 ${data.added}건 반영)` : ""}`;
+      el.style.color = "#666";
+    }
+  });
+}
+
 function loadGrades() {
   const asOf = asOfParam();
   return fetch(`/pipeline/run?as_of=${asOf}`).then(r => r.json()).then(data => {
@@ -249,6 +268,7 @@ function selectCounty(code) {
 
 document.getElementById("asOfInput").addEventListener("change", () => {
   loadGrades().then(() => {
+    loadRefreshStatus();
     if (selectedCode) selectCounty(selectedCode);
   });
 });
@@ -260,7 +280,7 @@ document.getElementById("asOfInput").value = todayStr();
 initMap();
 loadOutbreaks();
 loadFarms();
-loadBoundaries().then(() => loadGrades());
+loadBoundaries().then(() => loadGrades().then(loadRefreshStatus));
 </script>
 </body>
 </html>

@@ -4,7 +4,7 @@
 /outbreaks, /sigun/{code}가 이번에 추가됐다. 기존 /map(folium)은 대조용으로 당분간 유지.
 """
 
-from datetime import date
+from datetime import date, datetime, timezone
 
 import pandas as pd
 from fastapi import FastAPI, HTTPException
@@ -12,11 +12,12 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.briefing import generate_county_briefing
-from app.config import BOUNDARY_PATH, MASTER_GEOCODED_PATH, FARMS_PATH
+from app.config import BOUNDARY_PATH, MASTER_GEOCODED_PATH, FARMS_PATH, MAFRA_REFRESH_INTERVAL_HOURS
 from app.constants import DEFAULT_FARM_ORDER_LIMIT, WARNING_RADIUS_KM
 from app.farm_order import farm_order
 from app.geo_normalize import code_to_name, farm_coverage_codes
 from app.mapping import build_map
+from app.master_refresh import refresh_master
 from app.pipeline import run_pipeline, run_pipeline_grades_only
 
 app = FastAPI(title="ASF 점검 우선순위 도구 — T3 v2")
@@ -25,6 +26,28 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 def _default_as_of() -> str:
     return date.today().strftime("%Y%m%d")
+
+
+# ASF v4 4.7 — 갱신 계층 상태. 판정 계층(grade())과는 절대 섞이지 않는다 — grade()는
+# 여전히 CSV만 읽는 순수 함수이고, 이 상태는 오직 "언제 마지막으로 mafra API를
+# 확인했는지"만 기록해 화면 상단에 보여주는 용도다.
+_LAST_REFRESH: dict = {"checked_at": None, "added": 0, "error": "아직 갱신 시도 전"}
+
+
+def _maybe_refresh(force: bool = False) -> None:
+    global _LAST_REFRESH
+    if not force and _LAST_REFRESH["checked_at"] is not None:
+        elapsed_hours = (
+            datetime.now(timezone.utc) - datetime.fromisoformat(_LAST_REFRESH["checked_at"])
+        ).total_seconds() / 3600
+        if elapsed_hours < MAFRA_REFRESH_INTERVAL_HOURS:
+            return
+    _LAST_REFRESH = refresh_master()
+
+
+@app.on_event("startup")
+def _startup_refresh():
+    _maybe_refresh(force=True)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -39,8 +62,16 @@ def health():
     return {"status": "ok"}
 
 
+@app.get("/refresh_status")
+def refresh_status():
+    """화면 상단 "마지막 갱신: {시각}" 표시용(4.7). 갱신 자체를 트리거하지 않고
+    마지막 상태만 읽는다 — 트리거는 /pipeline/run, /sigun/{code} 호출 시 일어난다."""
+    return _LAST_REFRESH
+
+
 @app.get("/pipeline/run")
 def pipeline_run(as_of: str | None = None):
+    _maybe_refresh()
     as_of = as_of or _default_as_of()
     state = run_pipeline(as_of)
 
@@ -130,6 +161,7 @@ _COUNTY_BRIEFING_CACHE: dict[tuple[str, str], dict] = {}
 
 @app.get("/sigun/{code}")
 def sigun_detail(code: str, as_of: str | None = None, limit: int = DEFAULT_FARM_ORDER_LIMIT):
+    _maybe_refresh()
     name = code_to_name(code)
     if name is None:
         raise HTTPException(status_code=404, detail=f"알 수 없는 시군구 코드: {code}")

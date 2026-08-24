@@ -22,7 +22,18 @@ EXTRACTION_CACHE_PATH = f"{CACHE_DIR}/case_extraction.json"
 
 KAKAO_KEY = os.getenv("KAKAO_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+MAFRA_API_KEY = os.getenv("MAFRA_API_KEY")
 
 # Node1 구조화 추출 / Node3 브리핑 생성에 쓰는 모델. 필요 시 이 상수만 바꾸면 된다.
-OPENAI_EXTRACTION_MODEL = "gpt-4.1-mini"
-OPENAI_BRIEFING_MODEL = "gpt-4.1-mini"
+# 2026-08-24: 기존 gpt-4.1-mini는 현재 OPENAI_API_KEY가 속한 프로젝트에서 403(모델
+# 접근 권한 없음)이 나 gpt-5.4-mini로 교체(client.models.list()로 실제 접근 가능 모델
+# 확인 후 결정 — gpt-5.4-nano/gpt-5.6-luna/gpt-5.6-terra도 가능하나 mini가 기존
+# 용도(구조화 추출/짧은 브리핑 문장)에 맞는 크기).
+OPENAI_EXTRACTION_MODEL = "gpt-5.4-mini"
+OPENAI_BRIEFING_MODEL = "gpt-5.4-mini"
+
+# ASF v4 4.7 — 갱신 계층(mafra API). 엔드포인트/제약은 작업지시서 4.7에서 실측 확인됨.
+MAFRA_API_BASE = "http://211.237.50.150:7080/openapi"
+MAFRA_GRID_ID = "Grid_20151204000000000316_1"
+MAFRA_PAGE_SIZE = 999
+MAFRA_REFRESH_INTERVAL_HOURS = 6
