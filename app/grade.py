@@ -33,8 +33,9 @@ from app.geo_normalize import all_sgg_codes, geometry_for_code
 
 IS_STUB = False
 GRADE_METHOD_NOTE = (
-    f"등급 판정: 최근 3주 이내 발생 중 시군 경계까지 최단거리 기준 "
-    f"({RADIUS_KM}km 이내 심각, {RADIUS_KM}~{WARNING_RADIUS_KM}km 주의)."
+    f"등급을 매기는 기준: 최근 3주 안에 발생한 사례 중 이 시군 경계선에서 가장 가까운 "
+    f"거리를 봅니다. {RADIUS_KM}km 이내면 심각, {RADIUS_KM}~{WARNING_RADIUS_KM}km면 주의, "
+    f"그보다 멀거나(또는 3주가 지났으면) 평시로 표시합니다."
 )
 
 # 시군 250개 폴리곤을 모듈 로드 시 한 번만 shapely로 파싱해둔다 — grade()가 시군마다

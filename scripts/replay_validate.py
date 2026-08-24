@@ -31,7 +31,7 @@ import pandas as pd
 
 sys.path.insert(0, ".")
 
-from app.geo_normalize import all_sgg_codes, code_to_name, resolve_address  # noqa: E402
+from app.geo_normalize import all_sgg_codes, code_to_name, display_name, resolve_address  # noqa: E402
 from app.grade import grade  # noqa: E402
 from app.livestock_stats import livestock_count, never_farming_codes  # noqa: E402
 from app.master_loader import load_master_deduped  # noqa: E402
@@ -137,7 +137,7 @@ def indicator_b(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
         pyeongsi_rate = pyeongsi_cases / (pyeongsi_head / 10_000) if pyeongsi_head else None
 
         per_county_rows.append({
-            "시군": code_to_name(code),
+            "시군": display_name(code),
             "심각_주수": len(sim), "심각_발생": sim_cases,
             "심각_발생률": round(sim_rate, 3) if sim_rate is not None else None,
             "평시_주수": len(pyeongsi), "평시_발생": pyeongsi_cases,

@@ -13,13 +13,13 @@ from openai import OpenAI
 
 from app.config import OPENAI_API_KEY, OPENAI_BRIEFING_MODEL
 from app.grade import GRADE_METHOD_NOTE
-from app.geo_normalize import code_to_name
+from app.geo_normalize import display_name
 
 
 def _summarize_grades(grades: dict[str, dict]) -> str:
     by_grade = {"심각": [], "주의": [], "평시": []}
     for code, g in grades.items():
-        by_grade[g["grade"]].append(code_to_name(code) or code)
+        by_grade[g["grade"]].append(display_name(code) or code)
 
     lines = [f"{g}: {len(names)}개 시군 ({', '.join(names) if names else '-'})" for g, names in by_grade.items()]
     return "\n".join(lines)

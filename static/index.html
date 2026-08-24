@@ -49,7 +49,7 @@
       <p><span id="countyGradeBadge" class="grade-badge"></span> <span id="countyDays"></span></p>
       <p id="countyBriefing"></p>
       <div class="disclaimer" id="countyDisclaimer"></div>
-      <h3>등급 근거 (시군 중심 기준)</h3>
+      <h3>등급 근거</h3>
       <p id="countyBasis"></p>
       <h3>농장 점검 순서 <input type="number" id="limitInput" value="20" min="1" max="200"></h3>
       <div id="farmListArea"></div>
@@ -60,10 +60,13 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.1.0/leaflet.markercluster.js"></script>
 <script>
-const GRADE_COLOR = { "평시": "#dcdcdc", "주의": "#f4b400", "심각": "#d33f3f" };
+const GRADE_COLOR = { "평시": "#a5d6a7", "주의": "#f4b400", "심각": "#d33f3f" };
 const FARM_DOT_COLOR = "#2b6cb0";
+const RECENT_WINDOW_DAYS = 21; // 등급 판정과 동일 기준(app/constants.py) — 지도의 발생 원도 이 창을 벗어나면 안 보여준다
 
-let map, geoJsonLayer, farmClusterLayer, noFarmLabelLayer;
+let map, geoJsonLayer, farmClusterLayer;
+let allOutbreaks = [];
+let outbreakLayer;
 let gradesByCode = {};
 let boundaryFeaturesByCode = {};
 let selectedCode = null;
@@ -75,18 +78,6 @@ function todayStr() {
 }
 function asOfParam() {
   return document.getElementById("asOfInput").value.replaceAll("-", "");
-}
-
-function roughCentroid(geometry) {
-  const coords = [];
-  function walk(node) {
-    if (typeof node[0] === "number") { coords.push(node); return; }
-    for (const child of node) walk(child);
-  }
-  walk(geometry.coordinates);
-  let sumLat = 0, sumLon = 0;
-  for (const c of coords) { sumLon += c[0]; sumLat += c[1]; }
-  return [sumLat / coords.length, sumLon / coords.length];
 }
 
 function styleForFeature(feature) {
@@ -106,31 +97,79 @@ function initMap() {
   L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
     attribution: "CARTO / OpenStreetMap",
   }).addTo(map);
+  // 시군 색칠 레이어(overlayPane, z=400)가 나중에 로드되면 발생 원을 덮어버리는 문제가
+  // 있었다 — 로드 순서와 무관하게 항상 위에 그려지도록 전용 pane을 둔다.
+  map.createPane("outbreaksPane");
+  map.getPane("outbreaksPane").style.zIndex = 450;
+}
+
+// app/geo_normalize.py::display_name과 동일한 두 가지 보정을 클라이언트에서도 적용한다
+// (경계 GeoJSON의 name은 원본 그대로 두고, 툴팁 표시할 때만 보정 — 매칭 키는 안 건드림).
+const PROVINCE_DISPLAY_SHORT = {
+  "11": "서울", "21": "부산", "22": "대구", "23": "인천", "24": "광주",
+  "25": "대전", "26": "울산", "29": "세종", "31": "경기", "32": "강원",
+  "33": "충북", "34": "충남", "35": "전북", "36": "전남", "37": "경북",
+  "38": "경남", "39": "제주",
+};
+let nameToCodeCount = {};
+
+function displayName(code, rawName) {
+  let name = rawName.replace(/^(.+시)(.+구)$/, "$1 $2");
+  if ((nameToCodeCount[rawName] || 0) > 1) {
+    const province = PROVINCE_DISPLAY_SHORT[code.slice(0, 2)];
+    if (province) name = `${province} ${name}`;
+  }
+  return name;
 }
 
 function loadBoundaries() {
   return fetch("/boundaries").then(r => r.json()).then(geojson => {
     for (const f of geojson.features) {
       boundaryFeaturesByCode[f.properties.code] = f;
+      nameToCodeCount[f.properties.name] = (nameToCodeCount[f.properties.name] || 0) + 1;
     }
     geoJsonLayer = L.geoJSON(geojson, {
       style: styleForFeature,
       onEachFeature: (feature, layer) => {
         layer.on("click", () => selectCounty(feature.properties.code));
-        layer.bindTooltip(feature.properties.name);
+        layer.bindTooltip(displayName(feature.properties.code, feature.properties.name));
+        // setStyle()로 폴리곤이 다시 그려질 때(클릭 시 선택 스타일 갱신) 마우스아웃 이벤트가
+        // 씹혀 툴팁이 안 닫힌 채 남는 경우가 있어, 명시적으로 한 번 더 닫아준다.
+        layer.on("mouseout", () => layer.closeTooltip());
       },
     }).addTo(map);
   });
 }
 
+function parseYYYYMMDD(s) {
+  return new Date(Date.UTC(+s.slice(0, 4), +s.slice(4, 6) - 1, +s.slice(6, 8)));
+}
+
 function loadOutbreaks() {
-  fetch("/outbreaks").then(r => r.json()).then(rows => {
-    for (const row of rows) {
-      L.circle([row.lat, row.lon], {
-        radius: 10000, color: "#d33f3f", weight: 1, fill: false,
-      }).bindTooltip(`${row.case_date} ${row.address}`).addTo(map);
-    }
+  return fetch("/outbreaks").then(r => r.json()).then(rows => {
+    allOutbreaks = rows;
+    renderOutbreaks();
   });
+}
+
+function renderOutbreaks() {
+  if (outbreakLayer) map.removeLayer(outbreakLayer);
+  outbreakLayer = L.layerGroup();
+  const asOfDate = parseYYYYMMDD(asOfParam());
+  for (const row of allOutbreaks) {
+    const diffDays = (asOfDate - parseYYYYMMDD(row.case_date)) / 86400000;
+    if (diffDays < 0 || diffDays > RECENT_WINDOW_DAYS) continue; // 오래된/미래 발생은 지금 등급과 무관하니 표시 안 함
+    L.circle([row.lat, row.lon], {
+      radius: 10000, color: "#c0392b", weight: 2.5, opacity: 0.9,
+      fill: true, fillOpacity: 0.06, pane: "outbreaksPane",
+    }).bindTooltip(`${row.case_date} ${row.address}`).addTo(outbreakLayer);
+    // 10km 원만으로는 정확한 발생 지점이 원 어디쯤인지 안 보여서, 중심에 작은 점을 찍는다.
+    L.circleMarker([row.lat, row.lon], {
+      radius: 4, color: "#c0392b", weight: 1, fill: true, fillColor: "#c0392b",
+      fillOpacity: 1, pane: "outbreaksPane",
+    }).bindTooltip(`${row.case_date} ${row.address}`).addTo(outbreakLayer);
+  }
+  outbreakLayer.addTo(map);
 }
 
 function clusterIconFn(cluster) {
@@ -159,24 +198,6 @@ function loadFarms() {
   });
 }
 
-function renderNoFarmLabels(codes) {
-  if (noFarmLabelLayer) map.removeLayer(noFarmLabelLayer);
-  noFarmLabelLayer = L.layerGroup();
-  for (const code of codes) {
-    const feature = boundaryFeaturesByCode[code];
-    if (!feature) continue;
-    const [lat, lon] = roughCentroid(feature.geometry);
-    L.marker([lat, lon], {
-      icon: L.divIcon({
-        html: '<div style="font-size:10px;color:#333;background:white;padding:1px 3px;' +
-              'border:1px solid #999;border-radius:3px;white-space:nowrap;">농장 데이터 미확보</div>',
-        className: "asf-no-farm-label",
-      }),
-    }).addTo(noFarmLabelLayer);
-  }
-  noFarmLabelLayer.addTo(map);
-}
-
 function loadRefreshStatus() {
   fetch("/refresh_status").then(r => r.json()).then(data => {
     const el = document.getElementById("refreshStatus");
@@ -200,7 +221,6 @@ function loadGrades() {
   return fetch(`/pipeline/run?as_of=${asOf}`).then(r => r.json()).then(data => {
     gradesByCode = data.grades;
     if (geoJsonLayer) geoJsonLayer.eachLayer(layer => layer.setStyle(styleForFeature(layer.feature)));
-    renderNoFarmLabels(data.no_farm_data_codes);
     document.getElementById("nationalBriefing").textContent = data.briefing.text;
     return data;
   });
@@ -238,6 +258,9 @@ function selectCounty(code) {
     if (l.feature.properties.code === prevSelected || l.feature.properties.code === code) {
       l.setStyle(styleForFeature(l.feature));
     }
+    // 선택 테두리가 이웃 폴리곤(특히 나중에 그려진 평시=초록)에 덮여 안 보이던 문제 —
+    // 선택된 레이어를 같은 pane 안에서 맨 위로 올린다.
+    if (l.feature.properties.code === code) l.bringToFront();
   });
 
   document.getElementById("panelDefault").style.display = "none";
@@ -249,17 +272,17 @@ function selectCounty(code) {
     document.getElementById("countyName").textContent = data.name;
     setGradeBadge(data.grade.grade);
     document.getElementById("countyDays").textContent =
-      data.grade.days_since_last === null ? "(자기 시군 발생 이력 없음)" : `자기 시군 최근 발생 ${data.grade.days_since_last}일 전`;
+      data.grade.days_since_last === null ? "(최근 3주 내 근거가 되는 발생 없음)" : `가장 가까운 최근 발생: ${data.grade.days_since_last}일 전`;
     document.getElementById("countyBriefing").textContent = data.briefing.text;
     document.getElementById("countyDisclaimer").textContent = data.briefing.disclaimer;
 
     if (data.nearest_case_basis) {
       const b = data.nearest_case_basis;
       document.getElementById("countyBasis").textContent =
-        `${b.address} (${b.distance_km}km, ${b.days_since}일 전) — ${b.note}`;
+        `가장 가까운 최근 발생: ${b.address} (이 시군 경계로부터 ${b.distance_km}km, ${b.days_since}일 전). ${b.note}`;
     } else {
       document.getElementById("countyBasis").textContent =
-        "시군 중심 기준 10km 이내에는 최근 3주 내 발생 없음 (등급은 시군 전체 기준이라 중심에서 먼 지점의 발생일 수 있음 — 아래 농장 목록 참고)";
+        "최근 3주 안에 이 시군 경계로부터 20km 이내에서 발생한 사례가 없습니다.";
     }
 
     renderFarmList(data.farm_status, data.farms);
@@ -267,6 +290,7 @@ function selectCounty(code) {
 }
 
 document.getElementById("asOfInput").addEventListener("change", () => {
+  renderOutbreaks();
   loadGrades().then(() => {
     loadRefreshStatus();
     if (selectedCode) selectCounty(selectedCode);

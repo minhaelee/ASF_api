@@ -15,7 +15,7 @@ from app.briefing import generate_county_briefing
 from app.config import BOUNDARY_PATH, MASTER_GEOCODED_PATH, FARMS_PATH, MAFRA_REFRESH_INTERVAL_HOURS
 from app.constants import DEFAULT_FARM_ORDER_LIMIT, WARNING_RADIUS_KM
 from app.farm_order import farm_order
-from app.geo_normalize import code_to_name, farm_coverage_codes
+from app.geo_normalize import display_name, farm_coverage_codes
 from app.mapping import build_map
 from app.master_refresh import refresh_master
 from app.pipeline import run_pipeline, run_pipeline_grades_only
@@ -79,7 +79,7 @@ def pipeline_run(as_of: str | None = None):
     # 코드가 유일한 키이므로 코드로 키를 두고 이름은 값 안에 넣는다.
     grades_out = {
         code: {
-            "name": code_to_name(code),
+            "name": display_name(code),
             "grade": g["grade"],
             "is_stub": g["is_stub"],
             "days_since_last": g["days_since_last"],
@@ -162,7 +162,7 @@ _COUNTY_BRIEFING_CACHE: dict[tuple[str, str], dict] = {}
 @app.get("/sigun/{code}")
 def sigun_detail(code: str, as_of: str | None = None, limit: int = DEFAULT_FARM_ORDER_LIMIT):
     _maybe_refresh()
-    name = code_to_name(code)
+    name = display_name(code)
     if name is None:
         raise HTTPException(status_code=404, detail=f"알 수 없는 시군구 코드: {code}")
 
@@ -190,7 +190,7 @@ def sigun_detail(code: str, as_of: str | None = None, limit: int = DEFAULT_FARM_
         }
         nearest_case_basis = {
             **nc,
-            "note": "시군 경계 기준 거리 — 개별 농장은 시군 안쪽에 있으므로 농장 목록의 거리는 이 값 이상이다",
+            "note": "이 거리는 시군 경계선까지의 거리입니다. 개별 농장은 경계선보다 안쪽에 있으니, 아래 농장 목록의 실제 거리는 이 값보다 조금 더 멀 수 있습니다.",
         }
 
     has_farms = code in farm_coverage_codes()

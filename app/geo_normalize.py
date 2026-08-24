@@ -15,6 +15,7 @@
 """
 
 import json
+import re
 import sys
 
 import pandas as pd
@@ -164,6 +165,45 @@ def all_sgg_codes() -> list[str]:
 
 def code_to_name(code: str) -> str | None:
     return _CODE_TO_NAME.get(code)
+
+
+# 2자리 시도코드 -> 화면 표시용 짧은 이름(display_name 전용, 매칭에는 안 쓰임).
+_PROVINCE_DISPLAY_SHORT = {
+    "11": "서울", "21": "부산", "22": "대구", "23": "인천", "24": "광주",
+    "25": "대전", "26": "울산", "29": "세종", "31": "경기", "32": "강원",
+    "33": "충북", "34": "충남", "35": "전북", "36": "전남", "37": "경북",
+    "38": "경남", "39": "제주",
+}
+
+_CITY_GU_SPLIT_RE = re.compile(r"^(.+시)(.+구)$")
+
+
+def display_name(code: str) -> str | None:
+    """code_to_name(code)의 화면 표시용 버전. 매칭 키(원본 name)는 절대 안 바꾸고,
+    사용자에게 보여줄 때만 두 가지를 보정한다(2026-08-24, 대시보드 가독성 피드백):
+
+    1. "고양시일산서구"처럼 대도시+구가 붙어 나오는 경계파일 표기에 공백을 넣는다
+       ("고양시 일산서구"). 이 붙은 표기 자체는 resolve_address()가 조인 키로 그대로
+       써야 하므로 _CODE_TO_NAME/원본 GeoJSON은 건드리지 않는다.
+    2. "서구"/"중구"/"동구"/"남구"/"북구"/"강서구"/"고성군"처럼 전국에 이름이 겹치는
+       시군(geo_normalize.py 상단 docstring에 실측 목록 있음)은 시도를 몰라서는
+       특정할 수 없으므로, 시도 짧은 이름을 앞에 붙인다("서구" -> "인천 서구").
+    """
+    raw_name = code_to_name(code)
+    if raw_name is None:
+        return None
+
+    name = raw_name
+    m = _CITY_GU_SPLIT_RE.match(name)
+    if m:
+        name = f"{m.group(1)} {m.group(2)}"
+
+    if len(_SIGUN_NAME_TO_CODES.get(raw_name, [])) > 1:
+        province = _PROVINCE_DISPLAY_SHORT.get(code[:2], "")
+        if province:
+            name = f"{province} {name}"
+
+    return name
 
 
 def parse_address_prefix(address: str) -> tuple[str, str, str]:
