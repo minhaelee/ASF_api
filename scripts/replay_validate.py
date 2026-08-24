@@ -33,7 +33,7 @@ sys.path.insert(0, ".")
 
 from app.geo_normalize import all_sgg_codes, code_to_name, resolve_address  # noqa: E402
 from app.grade import grade  # noqa: E402
-from app.livestock_stats import livestock_count  # noqa: E402
+from app.livestock_stats import livestock_count, never_farming_codes  # noqa: E402
 from app.master_loader import load_master_deduped  # noqa: E402
 
 WEEK_START = date(2019, 9, 1)
@@ -78,7 +78,7 @@ def build_replay_table() -> pd.DataFrame:
         for code in codes:
             g = grade(code, as_of_str)
             sigun_name = code_to_name(code)
-            head = livestock_count(sigun_name, year)
+            head = livestock_count(code, year)
             if head is None:
                 missing_stats += 1
                 continue
@@ -96,7 +96,7 @@ def build_replay_table() -> pd.DataFrame:
             print(f"[replay] {i + 1}주차 처리 완료 ({as_of_str})", flush=True)
 
     df = pd.DataFrame(records)
-    never_farming = [c for c in codes if all(livestock_count(code_to_name(c), y) is None for y in range(2018, 2027))]
+    never_farming = never_farming_codes()
     print(f"[replay] 총 시군-주 레코드 {len(df)}건, 분모 결측으로 제외된 시군-주 {missing_stats}건")
     print(f"[replay]   (양돈 통계가 어느 해에도 없는 시군구 {len(never_farming)}개가 대부분 — "
           f"서울 자치구 등 원래 양돈이 없는 지역. 부분 결측 5곳은 app/livestock_stats.py 참고)")
