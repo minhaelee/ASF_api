@@ -37,3 +37,7 @@ MAFRA_API_BASE = "http://211.237.50.150:7080/openapi"
 MAFRA_GRID_ID = "Grid_20151204000000000316_1"
 MAFRA_PAGE_SIZE = 999
 MAFRA_REFRESH_INTERVAL_HOURS = 6
+# 자동 갱신은 전체(~46,084건, 47페이지)를 매번 안 받고 최근 N행만 받는다(2026-08-24
+# 변경 — app/master_refresh.py 모듈 docstring 참고). 넉넉하게 잡아도 페이지 수가
+# 전체 대비 1/10 이하라 서버 간헐적 불안정에 걸릴 확률이 크게 준다.
+MAFRA_RECENT_WINDOW_ROWS = 5000

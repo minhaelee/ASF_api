@@ -4,6 +4,18 @@
 /outbreaks, /sigun/{code}가 이번에 추가됐다. 기존 /map(folium)은 대조용으로 당분간 유지.
 """
 
+import sys
+
+# Windows에서 uvicorn을 그냥 실행하면 콘솔 인코딩이 cp949라, 로그에 유니코드 특수문자
+# (예: em dash "—")가 하나만 섞여도 print()가 UnicodeEncodeError를 던진다. 2026-08-24
+# 실측으로 이게 app/master_refresh.py의 실패 로그 출력 중 발생해 FastAPI 시작 자체가
+# 죽는 걸 확인했다(4.7 "API 실패해도 서비스는 정상 동작" 원칙 위반) — 모듈 임포트
+# 시점에 한 번 재설정해 모든 print()가 안전하게 동작하도록 만든다.
+if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
+    sys.stdout.reconfigure(encoding="utf-8")
+if sys.stderr.encoding and sys.stderr.encoding.lower() != "utf-8":
+    sys.stderr.reconfigure(encoding="utf-8")
+
 from datetime import date, datetime, timezone
 
 import pandas as pd

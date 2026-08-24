@@ -37,9 +37,16 @@ app/main.py의 요청 처리 경로에서만 트리거된다 — grade() 안에�
 </Grid_20151204000000000316_1>
 ```
 전체 46,084건(전 축종·전 질병, 2003년분까지 있음) 중 질병명이 "아프리카돼지열병"인
-행만 클라이언트에서 거른다(서버 사이드 한글 필터 불가, 4.7). 페이지당 999행이라 매
-갱신마다 약 47회 호출이 필요하다 — 6시간에 한 번이라 빈도상 문제는 없지만, 첫 호출
-(앱 시작 시)이 응답할 때까지 수십 초가 걸릴 수 있음을 알아둘 것.
+행만 클라이언트에서 거른다(서버 사이드 한글 필터 불가 — 2026-08-24 재확인: 쿼리스트링에
+LKNTS_NM을 붙이면 ERROR-500이 바로 남).
+
+**자동 갱신은 전체가 아니라 최근 MAFRA_RECENT_WINDOW_ROWS행만 받는다(2026-08-24
+변경)**: 행 번호 1이 2003년 자료이고 행 번호가 클수록 최신이므로("등록 순서로 쌓인다"는
+전제, 실측 확인), 우리가 실제로 필요한 "마지막 확인 이후 새로 등록된 행"만 보려면
+전체(47페이지)를 받을 필요가 없다. 요청 수를 줄이면 아래 서버 불안정에 걸릴 확률도
+같이 준다 — 실측 도중 페이지가 많을수록(요청을 많이 할수록) 중간에 빈 페이지가 나오는
+사례를 반복 관찰했다. 전체 재확인이 필요한 일회성 감사용으로 `_fetch_all_rows()`는
+남겨뒀다(`python -m app.master_refresh --full`).
 """
 
 import sys
@@ -50,7 +57,14 @@ from datetime import datetime, timezone
 import pandas as pd
 import requests
 
-from app.config import MAFRA_API_BASE, MAFRA_API_KEY, MAFRA_GRID_ID, MAFRA_PAGE_SIZE, MASTER_PATH
+from app.config import (
+    MAFRA_API_BASE,
+    MAFRA_API_KEY,
+    MAFRA_GRID_ID,
+    MAFRA_PAGE_SIZE,
+    MAFRA_RECENT_WINDOW_ROWS,
+    MASTER_PATH,
+)
 
 DISEASE_FIELD = "LKNTS_NM"  # 질병명 — 작업지시서 4.7에서 유일하게 실측 확인된 필드명
 DISEASE_VALUE = "아프리카돼지열병"
@@ -86,54 +100,72 @@ _RETRY_BASE_DELAY_SEC = 2.0
 _INTER_PAGE_DELAY_SEC = 0.3
 
 
-def _fetch_all_rows() -> list[dict]:
-    """999행 제한을 페이지네이션으로 넘긴다.
+def _fetch_range(start: int, end_total: int) -> list[dict]:
+    """[start, end_total] 구간을 999행씩 나눠 받는다.
 
-    **실측으로 확인된 서버 불안정성(2026-08-24)**: 같은 요청을 반복하면 totalCnt 자체가
-    호출마다 달라지거나(46084 -> 35964), 첫 페이지가 통째로 0행을 반환하는 경우가
-    있었다. "짧은 페이지 = 끝"이라고 그냥 믿으면 이런 순간에 데이터를 통째로 놓치고도
-    "신규 0건"이라고 조용히 보고하게 된다 — 이게 "서버 문제로 확인을 못 했다"보다 훨씬
-    위험하다(사용자가 "확인했더니 없다"로 오해함). 그래서 첫 페이지에서 얻은 totalCnt에
-    도달하기 전에 짧은/빈 페이지가 나오면 재시도하고, 재시도 후에도 못 채우면 예외를
-    던져 refresh_master()가 "갱신 실패"로 명확히 처리하게 한다.
+    각 페이지마다 요청한 만큼(end-start+1) 정확히 받았는지 확인한다 — 실측으로 확인된
+    서버 불안정성(2026-08-24, 페이지가 간헐적으로 짧거나 통째로 0행을 반환) 때문에
+    "짧은 페이지 = 데이터 끝"이라고 믿으면 안 된다. 여기서는 [start, end_total] 범위가
+    호출부에서 미리 고정돼 있으므로(전체든 최근 N행이든), 매 페이지 "정확히 이만큼
+    요청했다"는 게 명확해 재시도 조건이 단순하다. 재시도 후에도 못 채우면 예외를 던져
+    refresh_master()가 "갱신 실패"로 처리하게 한다(조용히 데이터가 빠진 채 "신규 0건"
+    으로 오보하는 것보다 안전).
     """
     rows: list[dict] = []
-    start = 1
-    expected_total: int | None = None
-
-    while True:
-        end = start + MAFRA_PAGE_SIZE - 1
+    cursor = start
+    while cursor <= end_total:
+        end = min(cursor + MAFRA_PAGE_SIZE - 1, end_total)
+        want = end - cursor + 1
         page: list[dict] = []
-        total_cnt: int | None = None
-
         for attempt in range(_MAX_PAGE_RETRIES):
-            page, total_cnt = _fetch_page(start, end)
-            if expected_total is None and total_cnt is not None:
-                expected_total = total_cnt
-
-            still_more_expected = expected_total is not None and len(rows) + len(page) < expected_total
-            if still_more_expected and len(page) < MAFRA_PAGE_SIZE:
-                time.sleep(_RETRY_BASE_DELAY_SEC * (attempt + 1))
-                continue
-            break
+            page, _ = _fetch_page(cursor, end)
+            if len(page) >= want:
+                break
+            time.sleep(_RETRY_BASE_DELAY_SEC * (attempt + 1))
         else:
             raise MasterRefreshError(
-                f"페이지({start}-{end}) 응답이 {_MAX_PAGE_RETRIES}회 재시도에도 불안정함 "
-                f"(이번 수신 {len(page)}행, 예상 총 {expected_total}건 중 누적 {len(rows)}건)"
+                f"페이지({cursor}-{end}) 응답이 {_MAX_PAGE_RETRIES}회 재시도에도 불안정함 "
+                f"(이번 수신 {len(page)}행, 요청 {want}행)"
             )
-
-        rows.extend(page)
-        if len(page) < MAFRA_PAGE_SIZE:
-            break
-        start = end + 1
-        time.sleep(_INTER_PAGE_DELAY_SEC)
-
-    if expected_total is not None and len(rows) < expected_total:
-        raise MasterRefreshError(
-            f"페이지네이션이 끝났지만 수신 {len(rows)}건 < 서버가 보고한 총 {expected_total}건 "
-            "— 데이터 누락 가능성이 있어 갱신을 실패로 처리함"
-        )
+        rows.extend(page[:want])
+        cursor = end + 1
+        if cursor <= end_total:
+            time.sleep(_INTER_PAGE_DELAY_SEC)
     return rows
+
+
+def _fetch_total_count() -> int:
+    """totalCnt만 필요한 가벼운 확인 호출(1행) — 이것도 실측으로 간헐적 실패가 확인돼
+    (2026-08-24) 다른 페이지 호출과 동일하게 재시도한다."""
+    for attempt in range(_MAX_PAGE_RETRIES):
+        _, total_cnt = _fetch_page(1, 1)
+        if total_cnt is not None:
+            return total_cnt
+        time.sleep(_RETRY_BASE_DELAY_SEC * (attempt + 1))
+    raise MasterRefreshError(
+        f"totalCnt를 {_MAX_PAGE_RETRIES}회 재시도에도 읽을 수 없음 — 서버 응답 형식이 예상과 다름"
+    )
+
+
+def _fetch_all_rows() -> list[dict]:
+    """전체 데이터셋(현재 ~46,084건, ~47회 호출, 수십 초)을 처음부터 끝까지 받는다.
+    자동 갱신(refresh_master)은 이걸 쓰지 않고 _fetch_recent_rows를 쓴다 — 요청 수를
+    줄여 서버 간헐적 불안정에 덜 걸리게 하기 위함. 전체 재검증이 필요한 일회성 감사용."""
+    total_cnt = _fetch_total_count()
+    return _fetch_range(1, total_cnt)
+
+
+def _fetch_recent_rows(window: int) -> list[dict]:
+    """가장 최근 등록된 window행만 받는다 — 자동 갱신(refresh_master)의 기본 경로.
+
+    이 API는 행 번호(1~totalCnt) 범위로만 조회 가능한데, 실측 결과 1번 행이 2003년
+    자료라 행 번호가 클수록 최신이다(등록 순서로 쌓여있는 것으로 보임). 우리가 실제로
+    필요한 건 "마지막 확인 이후 새로 등록된 행"뿐이므로 전체를 매번 받을 필요가 없다.
+    dedup은 case_date+address 키로 하므로(4.7), window가 넉넉해 일부 겹쳐 받아도 무해하다.
+    """
+    total_cnt = _fetch_total_count()
+    start = max(1, total_cnt - window + 1)
+    return _fetch_range(start, total_cnt)
 
 
 def _validate_field_map(sample_row: dict) -> None:
@@ -217,7 +249,7 @@ def refresh_master() -> dict:
         return {"checked_at": checked_at, "added": 0, "error": msg}
 
     try:
-        raw_rows = _fetch_all_rows()
+        raw_rows = _fetch_recent_rows(MAFRA_RECENT_WINDOW_ROWS)
     except Exception as e:
         msg = f"mafra API 호출 실패: {type(e).__name__}: {e}"
         print(f"[master_refresh] {msg}")
@@ -248,4 +280,9 @@ def refresh_master() -> dict:
 
 if __name__ == "__main__":
     sys.stdout.reconfigure(encoding="utf-8")
-    print(refresh_master())
+    if "--full" in sys.argv:
+        rows = _fetch_all_rows()
+        asf = _to_case_rows(rows)
+        print(f"전체 {len(rows)}건 중 ASF {len(asf)}건 (일회성 감사 — CSV에 반영 안 함)")
+    else:
+        print(refresh_master())
