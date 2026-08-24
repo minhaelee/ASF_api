@@ -17,7 +17,7 @@ from app.constants import DEFAULT_FARM_ORDER_LIMIT, WARNING_RADIUS_KM
 from app.farm_order import farm_order
 from app.geo_normalize import code_to_name, farm_coverage_codes
 from app.mapping import build_map
-from app.pipeline import run_pipeline
+from app.pipeline import run_pipeline, run_pipeline_grades_only
 
 app = FastAPI(title="ASF 점검 우선순위 도구 — T3 v2")
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -125,6 +125,9 @@ def outbreaks():
     ]
 
 
+_COUNTY_BRIEFING_CACHE: dict[tuple[str, str], dict] = {}
+
+
 @app.get("/sigun/{code}")
 def sigun_detail(code: str, as_of: str | None = None, limit: int = DEFAULT_FARM_ORDER_LIMIT):
     name = code_to_name(code)
@@ -132,7 +135,10 @@ def sigun_detail(code: str, as_of: str | None = None, limit: int = DEFAULT_FARM_
         raise HTTPException(status_code=404, detail=f"알 수 없는 시군구 코드: {code}")
 
     as_of = as_of or _default_as_of()
-    state = run_pipeline(as_of)
+    # 시군 하나만 조회하는데 전국 브리핑(Node3)까지 매번 새로 만들 이유가 없다 —
+    # 실측 결과 이게 /sigun/{code} 응답시간의 절반 가까이를 차지했다. grades-only
+    # 그래프(node1+node2)만 돌려 등급 계산에 필요한 것만 얻는다.
+    state = run_pipeline_grades_only(as_of)
     grade_info = state["grades"][code]
 
     # 등급 판정에 쓰인 것과 같은 계산(app.grade)에서 그대로 뽑아온다 — 예전엔 시군
@@ -159,7 +165,13 @@ def sigun_detail(code: str, as_of: str | None = None, limit: int = DEFAULT_FARM_
     farm_status = "ok" if has_farms else "no_farm_data"
     farms_list = farm_order(code, as_of, limit=limit) if has_farms else []
 
-    briefing = generate_county_briefing(name, grade_info, nc)
+    # 등급이 as_of만의 순수 함수라, 같은 (code, as_of)는 항상 같은 브리핑 근거를 낸다 —
+    # limit은 브리핑 문장에 안 들어가므로 캐시 키에서 뺀다.
+    cache_key = (code, as_of)
+    briefing = _COUNTY_BRIEFING_CACHE.get(cache_key)
+    if briefing is None:
+        briefing = generate_county_briefing(name, grade_info, nc)
+        _COUNTY_BRIEFING_CACHE[cache_key] = briefing
 
     return {
         "code": code,
