@@ -29,6 +29,7 @@
     background: white; padding: 8px 12px; border: 1px solid #999; border-radius: 4px; font-size: 12px;
   }
   #limitInput { width: 50px; }
+  .leaflet-interactive:focus { outline: none; }
 </style>
 </head>
 <body>
@@ -101,6 +102,11 @@ function initMap() {
   // 있었다 — 로드 순서와 무관하게 항상 위에 그려지도록 전용 pane을 둔다.
   map.createPane("outbreaksPane");
   map.getPane("outbreaksPane").style.zIndex = 450;
+  // 농장 점(개별 circleMarker, 클러스터 풀렸을 때)도 overlayPane을 같이 쓰다 보니, 시군을
+  // 선택해 그 폴리곤에 bringToFront()를 부르면 농장 점이 밑에 깔리는 문제가 있었다 —
+  // 발생 원과 마찬가지로 전용 pane을 둬서 시군 선택 여부와 무관하게 항상 위에 오게 한다.
+  map.createPane("farmsPane");
+  map.getPane("farmsPane").style.zIndex = 440;
 }
 
 // app/geo_normalize.py::display_name과 동일한 두 가지 보정을 클라이언트에서도 적용한다
@@ -111,14 +117,11 @@ const PROVINCE_DISPLAY_SHORT = {
   "33": "충북", "34": "충남", "35": "전북", "36": "전남", "37": "경북",
   "38": "경남", "39": "제주",
 };
-let nameToCodeCount = {};
 
 function displayName(code, rawName) {
   let name = rawName.replace(/^(.+시)(.+구)$/, "$1 $2");
-  if ((nameToCodeCount[rawName] || 0) > 1) {
-    const province = PROVINCE_DISPLAY_SHORT[code.slice(0, 2)];
-    if (province) name = `${province} ${name}`;
-  }
+  const province = PROVINCE_DISPLAY_SHORT[code.slice(0, 2)];
+  if (province) name = `${province} ${name}`;
   return name;
 }
 
@@ -126,7 +129,6 @@ function loadBoundaries() {
   return fetch("/boundaries").then(r => r.json()).then(geojson => {
     for (const f of geojson.features) {
       boundaryFeaturesByCode[f.properties.code] = f;
-      nameToCodeCount[f.properties.name] = (nameToCodeCount[f.properties.name] || 0) + 1;
     }
     geoJsonLayer = L.geoJSON(geojson, {
       style: styleForFeature,
@@ -191,7 +193,7 @@ function loadFarms() {
     for (const row of rows) {
       const label = row.farm_name || "(농장명 미상)";
       L.circleMarker([row.lat, row.lon], {
-        radius: 3, color: FARM_DOT_COLOR, fill: true, fillOpacity: 0.7,
+        radius: 3, color: FARM_DOT_COLOR, fill: true, fillOpacity: 0.7, pane: "farmsPane",
       }).bindTooltip(`${row.sigun} ${label}`).addTo(farmClusterLayer);
     }
     map.addLayer(farmClusterLayer);

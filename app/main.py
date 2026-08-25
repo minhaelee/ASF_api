@@ -16,6 +16,7 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
 if sys.stderr.encoding and sys.stderr.encoding.lower() != "utf-8":
     sys.stderr.reconfigure(encoding="utf-8")
 
+import math
 from datetime import date, datetime, timezone
 
 import pandas as pd
@@ -136,21 +137,40 @@ def boundaries():
     return FileResponse(BOUNDARY_PATH, media_type="application/json")
 
 
+FARM_JITTER_RADIUS_DEG = 0.0004  # 위도 기준 약 40m — 표시 전용, 판정 계층은 이 값을 절대 안 씀
+
+
 @app.get("/farms")
 def farms():
-    """농장 점 전체(2,285건, 표시 전용) — 클라이언트 Leaflet이 직접 그린다."""
+    """농장 점 전체(2,285건, 표시 전용) — 클라이언트 Leaflet이 직접 그린다.
+
+    한 주소에 복수 법인이 등록돼 좌표가 완전히 동일한 농장이 166그룹(648행) 있다(T1).
+    지도에서 클러스터를 클릭해도 실제 좌표 차이가 없어 spiderfy(중앙에서 방사형으로
+    흩어지는 표시)로만 분리되는데, 사용자 피드백으로 대신 원형으로 살짝 흩어 보이게
+    한다 — 이 오프셋은 여기(표시용 엔드포인트)에서만 적용하고, 판정 계층(app/farm_order.py
+    등)은 이 엔드포인트를 거치지 않고 FARMS_PATH 원본을 직접 읽으므로 등급/거리 계산에는
+    전혀 영향이 없다.
+    """
     df = pd.read_csv(FARMS_PATH, encoding="utf-8-sig").dropna(subset=["위도", "경도"])
-    return [
-        {
+    group_idx = df.groupby(["위도", "경도"]).cumcount()
+    group_size = df.groupby(["위도", "경도"])["위도"].transform("size")
+
+    out = []
+    for (_, row), i, n in zip(df.iterrows(), group_idx, group_size):
+        lat, lon = float(row["위도"]), float(row["경도"])
+        if n > 1:
+            angle = 2 * math.pi * i / n
+            lat += FARM_JITTER_RADIUS_DEG * math.sin(angle)
+            lon += FARM_JITTER_RADIUS_DEG * math.cos(angle) / math.cos(math.radians(lat))
+        out.append({
             "farm_name": row["농장명"] if pd.notna(row["농장명"]) else None,
             "address": row["주소"],
             "sigun": row["시군"],
             "livestock_count": None if pd.isna(row["사육두수"]) else float(row["사육두수"]),
-            "lat": row["위도"],
-            "lon": row["경도"],
-        }
-        for _, row in df.iterrows()
-    ]
+            "lat": lat,
+            "lon": lon,
+        })
+    return out
 
 
 @app.get("/outbreaks")

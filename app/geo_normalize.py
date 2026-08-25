@@ -180,14 +180,14 @@ _CITY_GU_SPLIT_RE = re.compile(r"^(.+시)(.+구)$")
 
 def display_name(code: str) -> str | None:
     """code_to_name(code)의 화면 표시용 버전. 매칭 키(원본 name)는 절대 안 바꾸고,
-    사용자에게 보여줄 때만 두 가지를 보정한다(2026-08-24, 대시보드 가독성 피드백):
+    사용자에게 보여줄 때만 두 가지를 보정한다:
 
     1. "고양시일산서구"처럼 대도시+구가 붙어 나오는 경계파일 표기에 공백을 넣는다
-       ("고양시 일산서구"). 이 붙은 표기 자체는 resolve_address()가 조인 키로 그대로
-       써야 하므로 _CODE_TO_NAME/원본 GeoJSON은 건드리지 않는다.
-    2. "서구"/"중구"/"동구"/"남구"/"북구"/"강서구"/"고성군"처럼 전국에 이름이 겹치는
-       시군(geo_normalize.py 상단 docstring에 실측 목록 있음)은 시도를 몰라서는
-       특정할 수 없으므로, 시도 짧은 이름을 앞에 붙인다("서구" -> "인천 서구").
+       ("고양시 일산서구", 2026-08-24). 이 붙은 표기 자체는 resolve_address()가 조인
+       키로 그대로 써야 하므로 _CODE_TO_NAME/원본 GeoJSON은 건드리지 않는다.
+    2. 시도 짧은 이름을 항상 앞에 붙인다("정선군" -> "강원 정선군", 2026-08-25). 처음엔
+       "서구"/"고성군"처럼 전국에 이름이 겹치는 시군에만 붙였는데, 이름이 안 겹쳐도
+       시군명만으로는 어느 시도 소속인지 알 수 없다는 사용자 피드백을 받아 전체로 확장.
     """
     raw_name = code_to_name(code)
     if raw_name is None:
@@ -198,10 +198,9 @@ def display_name(code: str) -> str | None:
     if m:
         name = f"{m.group(1)} {m.group(2)}"
 
-    if len(_SIGUN_NAME_TO_CODES.get(raw_name, [])) > 1:
-        province = _PROVINCE_DISPLAY_SHORT.get(code[:2], "")
-        if province:
-            name = f"{province} {name}"
+    province = _PROVINCE_DISPLAY_SHORT.get(code[:2], "")
+    if province:
+        name = f"{province} {name}"
 
     return name
 
