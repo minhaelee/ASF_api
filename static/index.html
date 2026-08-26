@@ -383,14 +383,47 @@ function clusterIconFn(cluster) {
   });
 }
 
+// 지도의 농장 점을 클릭하면 그 농장의 방역시설 체크리스트를 팝업으로 바로 연다
+// (2026-08-26 피드백) — "점검 필요 농장 순위"에 안 뜨는 농장(다른 시군 선택 상태이거나,
+// 표시 개수 제한 밖이거나, 10km 반경 밖인 경우 등)도 지도에서는 항상 열 수 있어야
+// 한다는 취지라, 리스트 상태에 의존하지 않고 farm_id로 바로 조회한다.
+function loadFarmBiosecurityPopup(marker, farmId, label) {
+  fetch(`/farms/${farmId}/biosecurity`).then(r => r.json()).then(data => {
+    const itemsHtml = data.items.map(item =>
+      `<label class="biosec-item"><input type="checkbox" data-key="${item.key}" ${item.checked ? "checked" : ""}> ` +
+      `${item.label} <span class="biosec-basis">(${item.basis})</span></label>`
+    ).join("");
+    marker.setPopupContent(
+      `<div class="popup-biosec"><strong>${label}</strong><div class="biosec-items">${itemsHtml}</div>` +
+      `<div class="disclaimer">담당자가 현장에서 직접 확인해 기록하는 항목입니다 — 자동 판정 아님.</div></div>`
+    );
+    const popupEl = marker.getPopup().getElement();
+    popupEl.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+      cb.addEventListener("change", () => {
+        const checkedKeys = [...popupEl.querySelectorAll('input[type="checkbox"]:checked')].map(el => el.dataset.key);
+        fetch(`/farms/${farmId}/biosecurity`, {
+          method: "PUT", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ checked_keys: checkedKeys }),
+        });
+      });
+    });
+  }).catch(() => {
+    marker.setPopupContent('<div class="no-data">체크리스트를 불러오지 못했습니다.</div>');
+  });
+}
+
 function loadFarms() {
   farmClusterLayer = L.markerClusterGroup({ iconCreateFunction: clusterIconFn });
   fetch("/farms").then(r => r.json()).then(rows => {
     for (const row of rows) {
       const label = row.farm_name || "(농장명 미상)";
-      L.circleMarker([row.lat, row.lon], {
+      const typeTag = row["축종"] === "도축장" ? '<span class="facility-tag">도축장</span>' : "";
+      const marker = L.circleMarker([row.lat, row.lon], {
         radius: 3, color: FARM_DOT_COLOR, fill: true, fillOpacity: 0.7, pane: "farmsPane",
-      }).bindTooltip(`${row.sigun} ${label}`).addTo(farmClusterLayer);
+      }).bindTooltip(`${row.sigun} ${label}`);
+      marker.bindPopup('<div class="loading">불러오는 중...</div>', { maxWidth: 260 });
+      marker.on("popupopen", () => loadFarmBiosecurityPopup(marker, row.farm_id, typeTag + label));
+      marker.addTo(farmClusterLayer);
     }
     map.addLayer(farmClusterLayer);
   });
@@ -482,7 +515,7 @@ function renderBasis(nearestCaseBasis) {
     `<div class="stat-note">${b.note}</div>`;
 }
 
-function renderFarmList(status, farmsList) {
+function renderFarmList(status, farmsList, grade) {
   const area = document.getElementById("farmListArea");
   const badge = document.getElementById("farmCountBadge");
   if (status === "no_farm_data") {
@@ -492,7 +525,19 @@ function renderFarmList(status, farmsList) {
   }
   badge.textContent = farmsList.length;
   if (farmsList.length === 0) {
-    area.innerHTML = '<div class="no-data">조건에 맞는 농장 없음 (최근 3주 내 10km 이내 발생 없음)</div>';
+    // 시군 등급(심각/주의)은 시군 경계선까지의 거리로 매기고, 이 리스트는 실제 발생
+    // 좌표에서 10km 이내인 농장만 추린다(app/farm_order.py) — 서로 다른 기준이라
+    // "등급은 심각/주의인데 리스트는 비어 있다"는 상황이 실제로 발생한다(docs/T4_한계.md
+    // 7번, 2026-08-26 실사용 중 화천군 사례로 확인 — 경계는 4.63km인데 가장 가까운
+    // 등록 농장은 10.4km). 평시일 때의 "정말 근처에 발생이 없음"과는 다른 상황이라
+    // 문구를 구분한다.
+    if (grade === "심각" || grade === "주의") {
+      area.innerHTML = '<div class="no-data">이 시군 경계선은 발생지에서 가깝지만(등급 근거 참고), ' +
+        '등록된 농장은 실제 발생 좌표 10km 이내에 없습니다. 시군 등급은 경계선 기준, ' +
+        '이 리스트는 농장의 실제 좌표 기준이라 서로 다른 기준을 씁니다.</div>';
+    } else {
+      area.innerHTML = '<div class="no-data">조건에 맞는 농장 없음 (최근 3주 내 10km 이내 발생 없음)</div>';
+    }
     return;
   }
   // 2026-08-26(7차) 국가 인허가 데이터 교체로 사육두수 컬럼 자체가 없어져 전 농장이
@@ -701,7 +746,7 @@ function selectCounty(code) {
     document.getElementById("countyDisclaimer").textContent = data.briefing.disclaimer;
 
     renderBasis(data.nearest_case_basis);
-    renderFarmList(data.farm_status, data.farms);
+    renderFarmList(data.farm_status, data.farms, data.grade.grade);
   });
 }
 

@@ -160,16 +160,22 @@ def farms():
     group_size = df.groupby(["위도", "경도"])["위도"].transform("size")
 
     out = []
-    for (_, row), i, n in zip(df.iterrows(), group_idx, group_size):
+    for (idx, row), i, n in zip(df.iterrows(), group_idx, group_size):
         lat, lon = float(row["위도"]), float(row["경도"])
         if n > 1:
             angle = 2 * math.pi * i / n
             lat += FARM_JITTER_RADIUS_DEG * math.sin(angle)
             lon += FARM_JITTER_RADIUS_DEG * math.cos(angle) / math.cos(math.radians(lat))
         out.append({
+            # app/farm_order.py의 farm_id와 같은 값(둘 다 FARMS_PATH를 같은 방식으로
+            # 읽고 dropna(위도,경도)만 거친 원본 행 인덱스라 서로 어긋나지 않는다) —
+            # 지도에서 농장 점을 클릭했을 때 그 농장의 방역시설 체크리스트를 바로
+            # 열 수 있게 한다(2026-08-26 피드백).
+            "farm_id": int(idx),
             "farm_name": row["농장명"] if pd.notna(row["농장명"]) else None,
             "address": row["주소"],
             "sigun": row["시군"],
+            "축종": row["축종"] if pd.notna(row["축종"]) else "돼지",
             "livestock_count": None if pd.isna(row["사육두수"]) else float(row["사육두수"]),
             "lat": lat,
             "lon": lon,
