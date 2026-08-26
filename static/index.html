@@ -495,17 +495,19 @@ function renderFarmList(status, farmsList) {
     area.innerHTML = '<div class="no-data">조건에 맞는 농장 없음 (최근 3주 내 10km 이내 발생 없음)</div>';
     return;
   }
-  let html = '<table class="farms"><tr><th>순위</th><th>농장명</th><th>거리</th><th>사육두수</th></tr>';
+  // 2026-08-26(7차) 국가 인허가 데이터 교체로 사육두수 컬럼 자체가 없어져 전 농장이
+  // "미상"이다(docs/T4_한계.md 3번) — 항상 "미상"만 뜨는 컬럼을 보여줄 이유가 없어
+  // 표에서 뺐다(피드백).
+  let html = '<table class="farms"><tr><th>순위</th><th>농장명</th><th>거리</th></tr>';
   farmsList.forEach((f, i) => {
-    const head = f["사육두수"] === null ? "미상" : f["사육두수"].toLocaleString();
     // 도축장도 ASF 전파 경로로 지목돼 데이터에 같이 포함된다(2026-08-26(7차)) — 농장과
     // 헷갈리지 않도록 배지로 구분 표시.
     const typeTag = f["축종"] === "도축장" ? '<span class="facility-tag">도축장</span>' : "";
     html += `<tr class="farm-row" data-farm-id="${f.farm_id}"><td class="farm-rank">${i + 1}</td>` +
       `<td>${typeTag}${f.farm_name || "(미상)"}<span class="biosec-hint" id="biosecHint-${f.farm_id}">▸ 방역시설 확인</span></td>` +
-      `<td>${f.distance_km}km</td><td>${head}</td></tr>`;
+      `<td>${f.distance_km}km</td></tr>`;
     html += `<tr class="farm-detail-row" id="farmDetail-${f.farm_id}" style="display:none;">` +
-      `<td colspan="4"><div class="biosec-panel" id="biosecPanel-${f.farm_id}"></div></td></tr>`;
+      `<td colspan="3"><div class="biosec-panel" id="biosecPanel-${f.farm_id}"></div></td></tr>`;
   });
   html += "</table>";
   area.innerHTML = html;
