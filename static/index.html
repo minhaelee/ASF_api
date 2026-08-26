@@ -203,7 +203,7 @@
       <div id="fieldResponseArea" class="two-col-grid" style="display:none;">
         <div class="dash-card" id="checklistCard">
           <div class="dash-card-header" onclick="toggleCard(this)">
-            <span>📋 현장 대응 체크리스트</span><span class="chev">▾</span>
+            <span>📋 시군 대응 조치 제안 (AI 종합)</span><span class="chev">▾</span>
           </div>
           <div class="dash-card-body"><div id="checklistArea"></div></div>
         </div>
@@ -620,7 +620,7 @@ function renderChecklist(text) {
   const area = document.getElementById("checklistArea");
   const items = text.split("\n").map(l => l.trim()).filter(l => l.startsWith("-"));
   if (items.length === 0) {
-    area.innerHTML = `<div class="no-data">${text || "체크리스트를 불러오지 못했습니다."}</div>`;
+    area.innerHTML = `<div class="no-data">${text || "조치 제안을 불러오지 못했습니다."}</div>`;
     return;
   }
   let html = "<ul>";
@@ -679,7 +679,7 @@ function renderCountyNews(text, citations) {
 function loadFieldResponse(code, asOf) {
   const area = document.getElementById("fieldResponseArea");
   area.style.display = "grid"; // .two-col-grid — "block"으로 두면 인라인 스타일이 클래스의 grid를 덮어써 1열로 무너짐
-  document.getElementById("checklistArea").innerHTML = '<div class="loading">체크리스트 생성 중... (최대 20초 정도 걸릴 수 있습니다)</div>';
+  document.getElementById("checklistArea").innerHTML = '<div class="loading">AI가 조치안을 종합하는 중... (최대 20초 정도 걸릴 수 있습니다)</div>';
   document.getElementById("countyNewsArea").innerHTML = '<div class="loading">뉴스 검색 중...</div>';
   document.getElementById("fieldResponseDisclaimer").textContent = "";
 
@@ -692,7 +692,7 @@ function loadFieldResponse(code, asOf) {
     renderCountyNews(data.news_text, data.news_citations);
     document.getElementById("fieldResponseDisclaimer").textContent = data.disclaimer;
   }).catch(() => {
-    document.getElementById("checklistArea").innerHTML = '<div class="no-data">체크리스트를 불러오지 못했습니다.</div>';
+    document.getElementById("checklistArea").innerHTML = '<div class="no-data">조치 제안을 불러오지 못했습니다.</div>';
     document.getElementById("countyNewsArea").innerHTML = '<div class="no-data">뉴스를 불러오지 못했습니다.</div>';
   });
 }
