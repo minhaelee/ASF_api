@@ -23,7 +23,9 @@ import pandas as pd
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
+from app.biosecurity_checks import get_checklist, set_checklist
 from app.briefing import generate_county_briefing, build_risk_list
 from app.config import BOUNDARY_PATH, MASTER_GEOCODED_PATH, FARMS_PATH, MAFRA_REFRESH_INTERVAL_HOURS
 from app.constants import DEFAULT_FARM_ORDER_LIMIT, WARNING_RADIUS_KM
@@ -275,3 +277,22 @@ def sigun_field_response(code: str, as_of: str | None = None):
     nc, _ = _build_nearest_case_basis(grade_info)
 
     return build_field_response_cached(code, as_of, name, grade_info, nc)
+
+
+class BiosecurityUpdate(BaseModel):
+    checked_keys: list[str]
+
+
+@app.get("/farms/{farm_id}/biosecurity")
+def farm_biosecurity(farm_id: int):
+    """농장별 방역시설 체크리스트 조회(2026-08-26 6차 피드백). farm_id는
+    app/farm_order.py가 매기는 원본 CSV 행 인덱스 — 담당자가 현장에서 직접 확인한
+    값을 저장·조회만 한다(app/biosecurity_checks.py 모듈독스트링 참고, AI가 상태를
+    판정하지 않는다는 원칙을 여기서도 지킨다)."""
+    return get_checklist(farm_id)
+
+
+@app.put("/farms/{farm_id}/biosecurity")
+def farm_biosecurity_update(farm_id: int, body: BiosecurityUpdate):
+    """담당자가 화면에서 체크한 현재 상태 전체로 덮어쓴다(멱등적)."""
+    return set_checklist(farm_id, body.checked_keys)

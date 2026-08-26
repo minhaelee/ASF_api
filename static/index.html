@@ -36,6 +36,18 @@
   table.farms th, table.farms td { text-align: left; padding: 3px 4px; border-bottom: 1px solid #eee; }
   table.farms th:first-child, table.farms .farm-rank { width: 28px; text-align: center; }
   table.farms .farm-rank { font-weight: 700; color: #2b6cb0; }
+
+  /* 농장별 방역시설 체크리스트 (2026-08-26(6차)) */
+  .farm-row { cursor: pointer; }
+  .farm-row:hover { background: #f4f7fc; }
+  .biosec-hint { margin-left: 6px; font-size: 10.5px; color: #9aa5b8; }
+  .farm-detail-row td { padding: 0 !important; border-bottom: 1px solid #eee; }
+  .biosec-panel { padding: 10px 8px; background: #fafbfd; }
+  .biosec-items { display: flex; flex-direction: column; gap: 5px; }
+  .biosec-item { display: flex; align-items: baseline; gap: 6px; font-size: 12px; cursor: pointer; }
+  .biosec-item input { flex-shrink: 0; }
+  .biosec-basis { font-size: 10.5px; color: #999; }
+  .biosec-panel .disclaimer { margin: 8px 0 0; }
   .no-data { color: #888; font-style: italic; padding: 8px 0; }
   .legend-box {
     position: absolute; bottom: 20px; left: 20px; z-index: 1000;
@@ -274,6 +286,16 @@ function initMap() {
   // 발생 원과 마찬가지로 전용 pane을 둬서 시군 선택 여부와 무관하게 항상 위에 오게 한다.
   map.createPane("farmsPane");
   map.getPane("farmsPane").style.zIndex = 440;
+
+  // 흰 말풍선(시군 이름 툴팁)이 커서를 뗀 뒤에도 안 닫히고 남는 문제 — 개별 레이어의
+  // mouseout만으로는 안 끝난다. 특히 focusMapOnCounty()의 flyToBounds()처럼 지도가
+  // "프로그램적으로" 움직이면 커서는 그대로인데 폴리곤이 커서 밑에서 빠져나가서,
+  // 브라우저가 실제 mouseout DOM 이벤트를 못 쏴 툴팁이 그 자리에 붙박이로 남는다.
+  // 지도가 움직이기 시작하는 시점(드래그·확대·flyToBounds 전부 포함)에 열려있는
+  // 툴팁을 전부 강제로 닫아 이 경우까지 확실히 잡는다.
+  map.on("movestart", () => {
+    if (geoJsonLayer) geoJsonLayer.eachLayer(l => l.closeTooltip());
+  });
 }
 
 // app/geo_normalize.py::display_name과 동일한 두 가지 보정을 클라이언트에서도 적용한다
@@ -472,10 +494,72 @@ function renderFarmList(status, farmsList) {
   let html = '<table class="farms"><tr><th>순위</th><th>농장명</th><th>거리</th><th>사육두수</th></tr>';
   farmsList.forEach((f, i) => {
     const head = f["사육두수"] === null ? "미상" : f["사육두수"].toLocaleString();
-    html += `<tr><td class="farm-rank">${i + 1}</td><td>${f.farm_name || "(미상)"}</td><td>${f.distance_km}km</td><td>${head}</td></tr>`;
+    html += `<tr class="farm-row" data-farm-id="${f.farm_id}"><td class="farm-rank">${i + 1}</td>` +
+      `<td>${f.farm_name || "(미상)"}<span class="biosec-hint" id="biosecHint-${f.farm_id}">▸ 방역시설 확인</span></td>` +
+      `<td>${f.distance_km}km</td><td>${head}</td></tr>`;
+    html += `<tr class="farm-detail-row" id="farmDetail-${f.farm_id}" style="display:none;">` +
+      `<td colspan="4"><div class="biosec-panel" id="biosecPanel-${f.farm_id}"></div></td></tr>`;
   });
   html += "</table>";
   area.innerHTML = html;
+}
+
+// 농장 행을 누르면 그 아래에 방역시설 체크리스트를 펼친다(2026-08-26(6차) 피드백) —
+// AI가 상태를 판정하는 게 아니라 담당자가 현장에서 직접 체크한 값을 저장·조회만
+// 한다(app/biosecurity_checks.py). 이벤트 위임이라 renderFarmList가 다시 그려도
+// 리스너를 매번 다시 달 필요 없음.
+document.getElementById("farmListArea").addEventListener("click", e => {
+  if (e.target.closest(".biosec-panel")) return; // 체크박스 클릭이 행 토글로 안 번지게
+  const row = e.target.closest(".farm-row");
+  if (!row) return;
+  const farmId = row.dataset.farmId;
+  const detailRow = document.getElementById(`farmDetail-${farmId}`);
+  const willShow = detailRow.style.display === "none";
+  detailRow.style.display = willShow ? "table-row" : "none";
+  if (willShow && !detailRow.dataset.loaded) {
+    detailRow.dataset.loaded = "1";
+    loadFarmBiosecurity(farmId);
+  }
+});
+
+document.getElementById("farmListArea").addEventListener("change", e => {
+  if (e.target.matches('input[type="checkbox"][data-farm-id]')) {
+    saveFarmBiosecurity(e.target.dataset.farmId);
+  }
+});
+
+function loadFarmBiosecurity(farmId) {
+  const panel = document.getElementById(`biosecPanel-${farmId}`);
+  panel.innerHTML = '<div class="loading">불러오는 중...</div>';
+  fetch(`/farms/${farmId}/biosecurity`).then(r => r.json()).then(data => renderBiosecPanel(farmId, data));
+}
+
+function renderBiosecPanel(farmId, data) {
+  const panel = document.getElementById(`biosecPanel-${farmId}`);
+  let html = '<div class="biosec-items">';
+  for (const item of data.items) {
+    html += `<label class="biosec-item"><input type="checkbox" data-farm-id="${farmId}" data-key="${item.key}" ${item.checked ? "checked" : ""}> ` +
+      `${item.label} <span class="biosec-basis">(${item.basis})</span></label>`;
+  }
+  html += '</div><div class="disclaimer">이 체크리스트는 담당자가 현장에서 직접 확인해 기록하는 항목입니다(가축전염병 예방법 ' +
+    '제17조·방역실시요령 제7조 기준) — 자동으로 판정된 값이 아닙니다.</div>';
+  panel.innerHTML = html;
+  updateBiosecHint(farmId, data.checked_count, data.total_count);
+}
+
+function updateBiosecHint(farmId, checkedCount, totalCount) {
+  const hint = document.getElementById(`biosecHint-${farmId}`);
+  if (hint) hint.textContent = `▸ 방역시설 ${checkedCount}/${totalCount}`;
+}
+
+function saveFarmBiosecurity(farmId) {
+  const panel = document.getElementById(`biosecPanel-${farmId}`);
+  const checkedKeys = [...panel.querySelectorAll('input[type="checkbox"]:checked')].map(el => el.dataset.key);
+  fetch(`/farms/${farmId}/biosecurity`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ checked_keys: checkedKeys }),
+  }).then(r => r.json()).then(data => updateBiosecHint(farmId, data.checked_count, data.total_count));
 }
 
 function renderChecklist(text) {

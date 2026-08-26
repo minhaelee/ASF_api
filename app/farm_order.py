@@ -38,7 +38,7 @@ def farm_order(sigun_code: str, as_of: str, limit: int = DEFAULT_FARM_ORDER_LIMI
     candidates = farms[farms["주소"].apply(lambda a: resolve_address(str(a)) == sigun_code)]
 
     results = []
-    for _, farm in candidates.iterrows():
+    for idx, farm in candidates.iterrows():
         best_dist, best_case = None, None
         for _, case in recent.iterrows():
             d = haversine_km(farm["위도"], farm["경도"], case["위도"], case["경도"])
@@ -50,6 +50,11 @@ def farm_order(sigun_code: str, as_of: str, limit: int = DEFAULT_FARM_ORDER_LIMI
 
         headcount = farm["사육두수"]
         results.append({
+            # FARMS_PATH는 이 프로젝트에서 수정되지 않는 정적 참조 파일이라(발생 마스터
+            # CSV와 달리 갱신 계층이 안 건드림), pandas가 매번 부여하는 원본 행 인덱스가
+            # 요청마다 안정적이다 — app/biosecurity_checks.py가 이 값을 농장의 영구
+            # 식별자로 그대로 쓴다.
+            "farm_id": int(idx),
             "farm_name": farm["농장명"] if pd.notna(farm["농장명"]) else None,
             "address": farm["주소"],
             "사육두수": None if pd.isna(headcount) else float(headcount),
