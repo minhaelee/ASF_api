@@ -12,3 +12,4 @@ shapely
 psycopg2-binary
 pgvector
 pypdf
+pyproj
