@@ -101,6 +101,27 @@ def grade(sigun_code: str, as_of: str) -> dict:
     }
 
 
+def nearby_case_count(sigun_code: str, as_of: str, radius_km: float = WARNING_RADIUS_KM) -> int:
+    """grade()와 같은 근거(최근 3주, 시군 경계까지 최단거리)로, radius_km 이내 발생
+    "건수"를 센다. grade()는 가장 가까운 사례 1건만 돌려주므로, 전국 브리핑의 위험
+    지역 표에 "이 시군 근처에 최근 몇 건이나 있었나"를 보여주려면 이 함수가 따로
+    필요하다. 표시 전용 집계이고 등급 판정 자체에는 안 쓴다."""
+    poly = _SHAPELY_POLYGONS.get(sigun_code)
+    if poly is None:
+        raise ValueError(f"알 수 없는 시군구 코드: {sigun_code}")
+
+    recent = _recent_cases(as_of)
+    if recent.empty:
+        return 0
+
+    count = 0
+    for _, case in recent.iterrows():
+        d = point_to_shapely_polygon_distance_km(case["위도"], case["경도"], poly)
+        if d <= radius_km:
+            count += 1
+    return count
+
+
 if __name__ == "__main__":
     import sys
 

@@ -24,7 +24,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.briefing import generate_county_briefing
+from app.briefing import generate_county_briefing, build_risk_list
 from app.config import BOUNDARY_PATH, MASTER_GEOCODED_PATH, FARMS_PATH, MAFRA_REFRESH_INTERVAL_HOURS
 from app.constants import DEFAULT_FARM_ORDER_LIMIT, WARNING_RADIUS_KM
 from app.farm_order import farm_order
@@ -110,6 +110,7 @@ def pipeline_run(as_of: str | None = None):
     return {
         "as_of": as_of,
         "grades": grades_out,
+        "risk_list": build_risk_list(as_of, state["grades"]),
         "no_farm_data_codes": no_farm_data_codes,
         "extraction": state["extraction_meta"],
         "grade_meta": state["grade_meta"],

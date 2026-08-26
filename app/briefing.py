@@ -12,17 +12,47 @@ import sys
 from openai import OpenAI
 
 from app.config import OPENAI_API_KEY, OPENAI_BRIEFING_MODEL
-from app.grade import GRADE_METHOD_NOTE
-from app.geo_normalize import display_name
+from app.grade import GRADE_METHOD_NOTE, nearby_case_count
+from app.geo_normalize import display_name, farm_count_by_sigun
+from app.livestock_stats import livestock_count
 
 
 def _summarize_grades(grades: dict[str, dict]) -> str:
-    by_grade = {"심각": [], "주의": [], "평시": []}
-    for code, g in grades.items():
-        by_grade[g["grade"]].append(display_name(code) or code)
+    by_grade = {"심각": 0, "주의": 0, "평시": 0}
+    for g in grades.values():
+        by_grade[g["grade"]] += 1
+    return "\n".join(f"{grade}: {count}개 시군" for grade, count in by_grade.items())
 
-    lines = [f"{g}: {len(names)}개 시군 ({', '.join(names) if names else '-'})" for g, names in by_grade.items()]
-    return "\n".join(lines)
+
+def build_risk_list(as_of: str, grades: dict[str, dict]) -> list[dict]:
+    """전국 브리핑용 위험 지역 표 — 심각/주의 시군만, 전부 계산값(LLM 미사용).
+
+    시군 상세 패널의 "점검 필요 농장 리스트"가 개별 농장을 순서대로 보여주듯,
+    여기서는 시군 단위로 "왜 위험하다고 보는지"를 판단할 근거 지표를 모아 보여준다:
+    최근 발생 건수(grade()의 "가장 가까운 1건"과 달리 반경 내 전체 건수),
+    등록 농장 수(있으면), 공식 통계 사육두수(있으면, app.livestock_stats — 등급 계산엔
+    안 쓰고 여기 표시에만 쓴다). 새로 등급을 매기지 않고 grades를 그대로 받아 쓴다.
+    """
+    year = int(as_of[:4])
+    farm_counts = farm_count_by_sigun()
+
+    risk = [(code, g) for code, g in grades.items() if g["grade"] in ("심각", "주의")]
+    risk.sort(key=lambda item: (item[1]["grade"] != "심각", item[1]["nearest_distance_km"]))
+
+    out = []
+    for code, g in risk:
+        out.append({
+            "code": code,
+            "name": display_name(code),
+            "grade": g["grade"],
+            "nearest_distance_km": g["nearest_distance_km"],
+            "days_since_last": g["days_since_last"],
+            "recent_case_count": nearby_case_count(code, as_of),
+            "farm_count": farm_counts.get(code, 0),
+            "livestock_count": livestock_count(code, year),
+            "livestock_year": year,
+        })
+    return out
 
 
 def generate_briefing(as_of: str, grades: dict[str, dict]) -> dict:
@@ -36,10 +66,13 @@ def generate_briefing(as_of: str, grades: dict[str, dict]) -> dict:
 
     client = OpenAI(api_key=OPENAI_API_KEY)
     instructions = (
-        "너는 ASF(아프리카돼지열병) 방역 담당 공무원을 위한 주간 브리핑 문장을 쓴다. "
-        "아래 등급 집계 결과만 근거로 3~5문장의 한국어 브리핑을 작성하라. "
-        "등급을 다시 판단하거나 새로운 수치를 추정하지 말고, 주어진 집계만 요약·설명하라. "
-        "심각/주의 등급 시군이 있으면 우선 점검 대상으로 언급하라."
+        "너는 ASF(아프리카돼지열병) 방역 담당 공무원을 위한 전국 현황 브리핑을 쓴다. "
+        "아래 등급 집계 수치만 근거로 2~3문장의 간결한 한국어 요약을 작성하라. "
+        "개별 시군 이름은 절대 나열하지 마라 — 심각/주의 시군의 상세 목록(발생 건수·"
+        "농장 수·사육두수 포함)은 화면에 별도 표로 제공되므로, 여기서는 전반적인 상황과 "
+        "함의만 짧게 서술한다. 등급을 다시 판단하거나 새로운 수치를 추정하지 마라. "
+        "마크다운 문법(**굵게**, - 목록 등)을 쓰지 말고 순수 텍스트로만 작성하라 — "
+        "화면이 그대로 렌더링해 별표 등이 문자 그대로 노출된다."
     )
     input_text = f"기준일(as_of): {as_of}\n\n등급 집계:\n{summary}"
 
@@ -81,7 +114,7 @@ def generate_county_briefing(sigun_name: str, grade_info: dict, nearest_case_inf
     instructions = (
         "너는 ASF(아프리카돼지열병) 방역 담당 공무원을 위한 시군 단위 브리핑 문장을 쓴다. "
         "주어진 정보만 문장으로 서술할 것. 목록에 없는 시군을 언급하거나 순서를 바꾸지 말 것. "
-        "1~3문장의 한국어로 작성하라."
+        "1~3문장의 한국어로 작성하라. 마크다운 문법(**굵게** 등) 쓰지 말고 순수 텍스트로만 작성하라."
     )
     input_text = f"시군: {sigun_name}\n등급: {grade_info['grade']}\n{nearest_line}"
 

@@ -21,8 +21,12 @@
   #panel h3 { font-size: 13px; color: #555; margin: 16px 0 6px; }
   .grade-badge { display: inline-block; padding: 2px 8px; border-radius: 3px; color: white; font-weight: bold; }
   .disclaimer { font-size: 11px; color: #888; margin-top: 4px; }
-  table.farms { width: 100%; border-collapse: collapse; font-size: 12px; }
-  table.farms th, table.farms td { text-align: left; padding: 3px 4px; border-bottom: 1px solid #eee; }
+  #nationalBriefing { line-height: 1.6; margin-bottom: 14px; }
+  table.farms, table.risk { width: 100%; border-collapse: collapse; font-size: 12px; }
+  table.farms th, table.farms td, table.risk th, table.risk td {
+    text-align: left; padding: 3px 4px; border-bottom: 1px solid #eee;
+  }
+  table.risk .grade-badge { padding: 1px 6px; font-size: 11px; }
   .no-data { color: #888; font-style: italic; padding: 8px 0; }
   .legend-box {
     position: absolute; bottom: 20px; left: 20px; z-index: 1000;
@@ -49,6 +53,8 @@
     <div id="panelDefault">
       <h2>전국 브리핑</h2>
       <p id="nationalBriefing">불러오는 중...</p>
+      <h3>위험 지역 (심각·주의)</h3>
+      <div id="riskListArea"></div>
     </div>
     <div id="panelCounty" style="display:none;">
       <button id="backToNational" type="button">← 전국 브리핑으로</button>
@@ -58,7 +64,7 @@
       <div class="disclaimer" id="countyDisclaimer"></div>
       <h3>등급 근거</h3>
       <p id="countyBasis"></p>
-      <h3>농장 점검 순서 <input type="number" id="limitInput" value="20" min="1" max="200"></h3>
+      <h3>점검 필요 농장 리스트 <input type="number" id="limitInput" value="20" min="1" max="200"></h3>
       <div id="farmListArea"></div>
     </div>
   </div>
@@ -233,6 +239,7 @@ function loadGrades() {
     gradesByCode = data.grades;
     if (geoJsonLayer) geoJsonLayer.eachLayer(layer => layer.setStyle(styleForFeature(layer.feature)));
     document.getElementById("nationalBriefing").textContent = data.briefing.text;
+    renderRiskList(data.risk_list);
     return data;
   });
 }
@@ -241,6 +248,27 @@ function setGradeBadge(grade) {
   const el = document.getElementById("countyGradeBadge");
   el.textContent = grade;
   el.style.background = GRADE_COLOR[grade];
+}
+
+function renderRiskList(riskList) {
+  const area = document.getElementById("riskListArea");
+  if (!riskList || riskList.length === 0) {
+    area.innerHTML = '<div class="no-data">현재 심각·주의 등급 시군 없음</div>';
+    return;
+  }
+  let html = '<table class="risk"><tr><th>시군</th><th>등급</th><th>최근 발생</th><th>등록 농장</th><th>사육두수</th></tr>';
+  for (const r of riskList) {
+    const badge = `<span class="grade-badge" style="background:${GRADE_COLOR[r.grade]}">${r.grade}</span>`;
+    const farmCount = r.farm_count > 0 ? `${r.farm_count}개` : "미확보";
+    const livestock = r.livestock_count === null
+      ? "결측"
+      : `${r.livestock_count.toLocaleString()}두(${r.livestock_year})`;
+    html += `<tr><td>${r.name}</td><td>${badge}</td>` +
+      `<td>${r.recent_case_count}건 (${r.nearest_distance_km}km)</td>` +
+      `<td>${farmCount}</td><td>${livestock}</td></tr>`;
+  }
+  html += "</table>";
+  area.innerHTML = html;
 }
 
 function renderFarmList(status, farmsList) {

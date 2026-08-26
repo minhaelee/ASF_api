@@ -273,6 +273,19 @@ def farm_coverage_codes() -> set[str]:
     return codes
 
 
+def farm_count_by_sigun() -> dict[str, int]:
+    """farms_geocoded.csv를 시군 코드별 등록 농장 수로 집계한다(표시 전용 — 전국
+    브리핑의 위험 지역 표에서 "이 시군에 농장이 몇 개 등록돼 있나"를 보여주는 데 쓴다).
+    코드가 안 잡히는 행은 farm_coverage_codes()와 동일하게 건너뛴다."""
+    farms = pd.read_csv(FARMS_PATH, encoding="utf-8-sig")
+    counts: dict[str, int] = {}
+    for addr in farms["주소"]:
+        code = resolve_address(str(addr))
+        if code is not None:
+            counts[code] = counts.get(code, 0) + 1
+    return counts
+
+
 if __name__ == "__main__":
     sys.stdout.reconfigure(encoding="utf-8")
     print(f"전국 시군구 {len(all_sgg_codes())}개 로드")
