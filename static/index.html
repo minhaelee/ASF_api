@@ -29,6 +29,11 @@
     background: white; padding: 8px 12px; border: 1px solid #999; border-radius: 4px; font-size: 12px;
   }
   #limitInput { width: 50px; }
+  #backToNational {
+    display: block; margin-bottom: 10px; padding: 0; border: none; background: none;
+    color: #2b6cb0; font-size: 12px; cursor: pointer;
+  }
+  #backToNational:hover { text-decoration: underline; }
   .leaflet-interactive:focus { outline: none; }
 </style>
 </head>
@@ -46,6 +51,7 @@
       <p id="nationalBriefing">불러오는 중...</p>
     </div>
     <div id="panelCounty" style="display:none;">
+      <button id="backToNational" type="button">← 전국 브리핑으로</button>
       <h2 id="countyName"></h2>
       <p><span id="countyGradeBadge" class="grade-badge"></span> <span id="countyDays"></span></p>
       <p id="countyBriefing"></p>
@@ -161,10 +167,13 @@ function renderOutbreaks() {
   for (const row of allOutbreaks) {
     const diffDays = (asOfDate - parseYYYYMMDD(row.case_date)) / 86400000;
     if (diffDays < 0 || diffDays > RECENT_WINDOW_DAYS) continue; // 오래된/미래 발생은 지금 등급과 무관하니 표시 안 함
+    // interactive: false — 안 그러면 이 원이 클릭을 가로채서 원 안에 있는 시군
+    // 폴리곤을 선택할 수 없는 문제가 있었다. 툴팁은 아래 중심점(작아서 방해 안 됨)에서
+    // 그대로 제공하므로 원 자체는 시각적 표시로만 남긴다.
     L.circle([row.lat, row.lon], {
       radius: 10000, color: "#c0392b", weight: 2.5, opacity: 0.9,
-      fill: true, fillOpacity: 0.06, pane: "outbreaksPane",
-    }).bindTooltip(`${row.case_date} ${row.address}`).addTo(outbreakLayer);
+      fill: true, fillOpacity: 0.06, pane: "outbreaksPane", interactive: false,
+    }).addTo(outbreakLayer);
     // 10km 원만으로는 정확한 발생 지점이 원 어디쯤인지 안 보여서, 중심에 작은 점을 찍는다.
     L.circleMarker([row.lat, row.lon], {
       radius: 4, color: "#c0392b", weight: 1, fill: true, fillColor: "#c0392b",
@@ -290,6 +299,20 @@ function selectCounty(code) {
     renderFarmList(data.farm_status, data.farms);
   });
 }
+
+function deselectCounty() {
+  const prevSelected = selectedCode;
+  selectedCode = null;
+  if (geoJsonLayer && prevSelected) {
+    geoJsonLayer.eachLayer(l => {
+      if (l.feature.properties.code === prevSelected) l.setStyle(styleForFeature(l.feature));
+    });
+  }
+  document.getElementById("panelCounty").style.display = "none";
+  document.getElementById("panelDefault").style.display = "block";
+}
+
+document.getElementById("backToNational").addEventListener("click", deselectCounty);
 
 document.getElementById("asOfInput").addEventListener("change", () => {
   renderOutbreaks();
