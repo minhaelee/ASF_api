@@ -41,3 +41,19 @@ MAFRA_REFRESH_INTERVAL_HOURS = 6
 # 변경 — app/master_refresh.py 모듈 docstring 참고). 넉넉하게 잡아도 페이지 수가
 # 전체 대비 1/10 이하라 서버 간헐적 불안정에 걸릴 확률이 크게 준다.
 MAFRA_RECENT_WINDOW_ROWS = 5000
+
+# 2026-08-26 — 정책 매뉴얼 RAG(app/policy_rag.py, scripts/ingest_policy_pdf.py)용.
+# .env에 이미 있던 값인데(로컬 pgvector) 이번에 처음 코드에서 읽는다.
+PGHOST = os.getenv("PGHOST")
+PGPORT = os.getenv("PGPORT")
+PGDATABASE = os.getenv("PGDATABASE")
+PGUSER = os.getenv("PGUSER")
+PGPASSWORD = os.getenv("PGPASSWORD")
+
+OPENAI_EMBEDDING_MODEL = "text-embedding-3-small"
+
+POLICY_DISCLAIMER = (
+    "이 답변은 방역실시요령·긴급행동지침(SOP) 조문/섹션 검색 결과를 요약한 참고용 "
+    "정보이며, 법적 효력이 있는 유권해석이 아닙니다. 실제 방역 조치는 반드시 관할 "
+    "가축방역기관에 재확인하십시오."
+)

@@ -39,6 +39,23 @@
   }
   #backToNational:hover { text-decoration: underline; }
   .leaflet-interactive:focus { outline: none; }
+  #tabBar { display: flex; gap: 4px; border-bottom: 1px solid #ddd; margin-bottom: 12px; }
+  .tab-btn {
+    flex: 1; padding: 7px 4px; border: none; background: none; cursor: pointer;
+    font-size: 12px; color: #666; border-bottom: 2px solid transparent;
+  }
+  .tab-btn:hover { color: #222; }
+  .tab-btn.active { color: #2b6cb0; border-bottom-color: #2b6cb0; font-weight: bold; }
+  .tab-panel h3 { margin-top: 0; }
+  #newsArea, #policyAnswerArea { line-height: 1.6; }
+  #newsArea .citations, #policyAnswerArea .sources {
+    margin-top: 10px; padding-top: 8px; border-top: 1px solid #eee; font-size: 11px; color: #666;
+  }
+  #newsArea .citations a { display: block; margin-bottom: 3px; color: #2b6cb0; }
+  #policyQuestionInput { width: 100%; box-sizing: border-box; padding: 5px; margin-bottom: 6px; }
+  #policyAskBtn { padding: 4px 10px; cursor: pointer; }
+  #policyAnswerArea { margin-top: 12px; }
+  #policyAnswerArea .sources div { margin-bottom: 2px; }
 </style>
 </head>
 <body>
@@ -53,8 +70,28 @@
     <div id="panelDefault">
       <h2>전국 브리핑</h2>
       <p id="nationalBriefing">불러오는 중...</p>
-      <h3>위험 지역 (심각·주의)</h3>
-      <div id="riskListArea"></div>
+      <div id="tabBar">
+        <button class="tab-btn active" type="button" data-tab="risk">위험 현황</button>
+        <button class="tab-btn" type="button" data-tab="news">관련 뉴스</button>
+        <button class="tab-btn" type="button" data-tab="policy">정책 Q&amp;A</button>
+      </div>
+      <div id="tabRisk" class="tab-panel">
+        <h3>위험 지역 (심각·주의)</h3>
+        <div id="riskListArea"></div>
+      </div>
+      <div id="tabNews" class="tab-panel" style="display:none;">
+        <div id="newsArea" class="no-data">탭을 열면 최신 뉴스를 불러옵니다.</div>
+      </div>
+      <div id="tabPolicy" class="tab-panel" style="display:none;">
+        <div class="disclaimer" style="margin-bottom:8px;">
+          이 답변은 방역실시요령·긴급행동지침(SOP) 검색 결과를 요약한 참고용 정보이며,
+          법적 효력이 있는 유권해석이 아닙니다. 실제 방역 조치는 반드시 관할
+          가축방역기관에 재확인하십시오.
+        </div>
+        <input type="text" id="policyQuestionInput" placeholder="예: 관리지역의 반경은 몇 미터인가요?">
+        <button id="policyAskBtn" type="button">질문하기</button>
+        <div id="policyAnswerArea"></div>
+      </div>
     </div>
     <div id="panelCounty" style="display:none;">
       <button id="backToNational" type="button">← 전국 브리핑으로</button>
@@ -342,8 +379,71 @@ function deselectCounty() {
 
 document.getElementById("backToNational").addEventListener("click", deselectCounty);
 
+// 뉴스 탭: web_search라 느리고(수 초~십수 초) 비용도 들어서 처음 클릭할 때만 불러오고,
+// 페이지 로드/날짜 변경마다 자동 호출하지 않는다. as_of가 바뀌면 이 값을 지워서
+// 다음 클릭 때 다시 불러오게만 한다(그 자리에서 바로 재호출하지 않음).
+let newsLoadedAsOf = null;
+
+function switchTab(name) {
+  document.querySelectorAll(".tab-btn").forEach(btn => btn.classList.toggle("active", btn.dataset.tab === name));
+  document.getElementById("tabRisk").style.display = name === "risk" ? "block" : "none";
+  document.getElementById("tabNews").style.display = name === "news" ? "block" : "none";
+  document.getElementById("tabPolicy").style.display = name === "policy" ? "block" : "none";
+  if (name === "news" && newsLoadedAsOf !== asOfParam()) loadNews();
+}
+
+function loadNews() {
+  const asOf = asOfParam();
+  const area = document.getElementById("newsArea");
+  area.innerHTML = '<div class="no-data">뉴스 검색 중... (최대 십수 초 걸릴 수 있습니다)</div>';
+  fetch(`/news?as_of=${asOf}`).then(r => r.json()).then(data => {
+    newsLoadedAsOf = asOf;
+    let html = `<p>${data.text}</p>`;
+    if (data.citations && data.citations.length > 0) {
+      html += '<div class="citations">';
+      for (const c of data.citations) {
+        html += `<a href="${c.url}" target="_blank" rel="noopener">${c.title}</a>`;
+      }
+      html += "</div>";
+    }
+    html += `<div class="disclaimer">${data.disclaimer}</div>`;
+    area.innerHTML = html;
+  }).catch(() => {
+    area.innerHTML = '<div class="no-data">뉴스를 불러오지 못했습니다.</div>';
+  });
+}
+
+function askPolicy() {
+  const q = document.getElementById("policyQuestionInput").value.trim();
+  if (!q) return;
+  const area = document.getElementById("policyAnswerArea");
+  area.innerHTML = '<div class="no-data">검색 중...</div>';
+  fetch(`/policy/ask?q=${encodeURIComponent(q)}`).then(r => r.json()).then(data => {
+    let html = `<p>${data.answer}</p>`;
+    if (data.sources && data.sources.length > 0) {
+      html += '<div class="sources">';
+      for (const s of data.sources) {
+        html += `<div>[${s.source_file}${s.article_no ? " " + s.article_no : ""}] ${s.title}</div>`;
+      }
+      html += "</div>";
+    }
+    area.innerHTML = html;
+  }).catch(() => {
+    area.innerHTML = '<div class="no-data">답변을 불러오지 못했습니다.</div>';
+  });
+}
+
+document.querySelectorAll(".tab-btn").forEach(btn => {
+  btn.addEventListener("click", () => switchTab(btn.dataset.tab));
+});
+document.getElementById("policyAskBtn").addEventListener("click", askPolicy);
+document.getElementById("policyQuestionInput").addEventListener("keydown", e => {
+  if (e.key === "Enter") askPolicy();
+});
+
 document.getElementById("asOfInput").addEventListener("change", () => {
   renderOutbreaks();
+  newsLoadedAsOf = null;
   loadGrades().then(() => {
     loadRefreshStatus();
     if (selectedCode) selectCounty(selectedCode);

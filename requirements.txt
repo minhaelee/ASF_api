@@ -9,3 +9,6 @@ langgraph
 folium
 pydantic>=2
 shapely
+psycopg2-binary
+pgvector
+pypdf

@@ -31,7 +31,9 @@ from app.farm_order import farm_order
 from app.geo_normalize import display_name, farm_coverage_codes
 from app.mapping import build_map
 from app.master_refresh import refresh_master
+from app.news import generate_news_briefing
 from app.pipeline import run_pipeline, run_pipeline_grades_only
+from app.policy_rag import answer_policy_question
 
 app = FastAPI(title="ASF 점검 우선순위 도구 — T3 v2")
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -120,6 +122,27 @@ def pipeline_run(as_of: str | None = None):
             "disclaimer": state["grade_meta"]["note"],
         },
     }
+
+
+@app.get("/news")
+def news(as_of: str | None = None):
+    """전국 단위 뉴스 요약(2026-08-26 피드백) — /pipeline/run과 같은 등급 계산을
+    재사용하고, 판정 자체는 절대 다시 안 한다. risk_list가 비면 app/news.py가
+    OpenAI를 아예 안 부르고 즉시 반환한다."""
+    _maybe_refresh()
+    as_of = as_of or _default_as_of()
+    state = run_pipeline_grades_only(as_of)
+    risk_list = build_risk_list(as_of, state["grades"])
+    return generate_news_briefing(as_of, risk_list)
+
+
+@app.get("/policy/ask")
+def policy_ask(q: str):
+    """정책 매뉴얼(방역실시요령+SOP) RAG 질의응답(2026-08-26 피드백,
+    작업지시서 v1~v4 "하지 않을 것"에 있던 항목을 사용자가 명시적으로 뒤집음)."""
+    if not q.strip():
+        raise HTTPException(status_code=400, detail="질문을 입력하세요.")
+    return answer_policy_question(q)
 
 
 @app.get("/map", response_class=HTMLResponse)
