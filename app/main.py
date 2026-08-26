@@ -28,12 +28,11 @@ from app.briefing import generate_county_briefing, build_risk_list
 from app.config import BOUNDARY_PATH, MASTER_GEOCODED_PATH, FARMS_PATH, MAFRA_REFRESH_INTERVAL_HOURS
 from app.constants import DEFAULT_FARM_ORDER_LIMIT, WARNING_RADIUS_KM
 from app.farm_order import farm_order
+from app.field_response import build_field_response_cached
 from app.geo_normalize import display_name, farm_coverage_codes
 from app.mapping import build_map
 from app.master_refresh import refresh_master
-from app.news import generate_news_briefing
 from app.pipeline import run_pipeline, run_pipeline_grades_only
-from app.policy_rag import answer_policy_question
 
 app = FastAPI(title="ASF 점검 우선순위 도구 — T3 v2")
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -124,27 +123,6 @@ def pipeline_run(as_of: str | None = None):
     }
 
 
-@app.get("/news")
-def news(as_of: str | None = None):
-    """전국 단위 뉴스 요약(2026-08-26 피드백) — /pipeline/run과 같은 등급 계산을
-    재사용하고, 판정 자체는 절대 다시 안 한다. risk_list가 비면 app/news.py가
-    OpenAI를 아예 안 부르고 즉시 반환한다."""
-    _maybe_refresh()
-    as_of = as_of or _default_as_of()
-    state = run_pipeline_grades_only(as_of)
-    risk_list = build_risk_list(as_of, state["grades"])
-    return generate_news_briefing(as_of, risk_list)
-
-
-@app.get("/policy/ask")
-def policy_ask(q: str):
-    """정책 매뉴얼(방역실시요령+SOP) RAG 질의응답(2026-08-26 피드백,
-    작업지시서 v1~v4 "하지 않을 것"에 있던 항목을 사용자가 명시적으로 뒤집음)."""
-    if not q.strip():
-        raise HTTPException(status_code=400, detail="질문을 입력하세요.")
-    return answer_policy_question(q)
-
-
 @app.get("/map", response_class=HTMLResponse)
 def map_view(as_of: str | None = None):
     as_of = as_of or _default_as_of()
@@ -215,6 +193,31 @@ def outbreaks():
 _COUNTY_BRIEFING_CACHE: dict[tuple[str, str], dict] = {}
 
 
+def _build_nearest_case_basis(grade_info: dict) -> tuple[dict | None, dict | None]:
+    """등급 판정에 쓰인 것과 같은 계산(app.grade)에서 그대로 뽑아온다 — 예전엔 시군
+    중심점 기준으로 따로 계산해서 등급 근거와 농장 목록 거리가 안 맞을 수 있었는데,
+    이제 grade()가 이미 폴리곤 경계 기준 최단거리를 계산해두므로 그걸 재사용한다.
+    WARNING_RADIUS_KM(20km)보다 멀면 "근거로 보여줄 만큼 가깝지 않다"고 보고 숨긴다
+    (평시 시군도 항상 "가장 가까운" 케이스는 있으므로, 컷오프 없이 그대로 노출하면
+    수백 km 밖 사례가 "근거"처럼 보이는 오독이 생긴다).
+
+    반환: (nc, nearest_case_basis) — nc는 note 없는 원본(브리핑/뉴스 프롬프트 입력용),
+    nearest_case_basis는 note가 붙은 API 응답용. 둘 다 근거가 없으면 (None, None)."""
+    if grade_info["nearest_distance_km"] is None or grade_info["nearest_distance_km"] > WARNING_RADIUS_KM:
+        return None, None
+    nc = {
+        "case_date": grade_info["nearest_case"]["case_date"],
+        "address": grade_info["nearest_case"]["address"],
+        "distance_km": grade_info["nearest_distance_km"],
+        "days_since": grade_info["days_since_last"],
+    }
+    nearest_case_basis = {
+        **nc,
+        "note": "이 거리는 시군 경계선까지의 거리입니다. 개별 농장은 경계선보다 안쪽에 있으니, 아래 농장 목록의 실제 거리는 이 값보다 조금 더 멀 수 있습니다.",
+    }
+    return nc, nearest_case_basis
+
+
 @app.get("/sigun/{code}")
 def sigun_detail(code: str, as_of: str | None = None, limit: int = DEFAULT_FARM_ORDER_LIMIT):
     _maybe_refresh()
@@ -229,25 +232,7 @@ def sigun_detail(code: str, as_of: str | None = None, limit: int = DEFAULT_FARM_
     state = run_pipeline_grades_only(as_of)
     grade_info = state["grades"][code]
 
-    # 등급 판정에 쓰인 것과 같은 계산(app.grade)에서 그대로 뽑아온다 — 예전엔 시군
-    # 중심점 기준으로 따로 계산해서 등급 근거와 농장 목록 거리가 안 맞을 수 있었는데,
-    # 이제 grade()가 이미 폴리곤 경계 기준 최단거리를 계산해두므로 그걸 재사용한다.
-    # WARNING_RADIUS_KM(20km)보다 멀면 "근거로 보여줄 만큼 가깝지 않다"고 보고 숨긴다
-    # (평시 시군도 항상 "가장 가까운" 케이스는 있으므로, 컷오프 없이 그대로 노출하면
-    # 수백 km 밖 사례가 "근거"처럼 보이는 오독이 생긴다).
-    nc = None
-    nearest_case_basis = None
-    if grade_info["nearest_distance_km"] is not None and grade_info["nearest_distance_km"] <= WARNING_RADIUS_KM:
-        nc = {
-            "case_date": grade_info["nearest_case"]["case_date"],
-            "address": grade_info["nearest_case"]["address"],
-            "distance_km": grade_info["nearest_distance_km"],
-            "days_since": grade_info["days_since_last"],
-        }
-        nearest_case_basis = {
-            **nc,
-            "note": "이 거리는 시군 경계선까지의 거리입니다. 개별 농장은 경계선보다 안쪽에 있으니, 아래 농장 목록의 실제 거리는 이 값보다 조금 더 멀 수 있습니다.",
-        }
+    nc, nearest_case_basis = _build_nearest_case_basis(grade_info)
 
     has_farms = code in farm_coverage_codes()
     farm_status = "ok" if has_farms else "no_farm_data"
@@ -271,3 +256,22 @@ def sigun_detail(code: str, as_of: str | None = None, limit: int = DEFAULT_FARM_
         "farms": farms_list,
         "briefing": briefing,
     }
+
+
+@app.get("/sigun/{code}/field_response")
+def sigun_field_response(code: str, as_of: str | None = None):
+    """시군 클릭 시 자동 생성되는 현장 대응 체크리스트(2026-08-26 2차 피드백) —
+    정책 매뉴얼 RAG 검색 + 시군 단위 뉴스 검색을 종합한다(app/field_response.py).
+    평시 시군은 조치할 게 없으므로 즉시 {"applicable": False}를 반환하고 LLM을
+    아예 안 부른다. /sigun/{code}와 독립적으로 프론트에서 병렬 호출된다."""
+    _maybe_refresh()
+    name = display_name(code)
+    if name is None:
+        raise HTTPException(status_code=404, detail=f"알 수 없는 시군구 코드: {code}")
+
+    as_of = as_of or _default_as_of()
+    state = run_pipeline_grades_only(as_of)
+    grade_info = state["grades"][code]
+    nc, _ = _build_nearest_case_basis(grade_info)
+
+    return build_field_response_cached(code, as_of, name, grade_info, nc)

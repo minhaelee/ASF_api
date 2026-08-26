@@ -2,31 +2,40 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<title>ASF 점검 우선순위 도구</title>
+<title>ASF 관제 대시보드</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.1.0/MarkerCluster.css" />
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.1.0/MarkerCluster.Default.css" />
 <style>
-  html, body { height: 100%; margin: 0; font-family: -apple-system, "Malgun Gothic", sans-serif; }
+  html, body { height: 100%; margin: 0; font-family: -apple-system, "Malgun Gothic", sans-serif; background: #eef1f6; }
   #header {
-    display: flex; align-items: center; gap: 12px;
-    padding: 10px 16px; border-bottom: 1px solid #ddd; background: #fafafa;
+    display: flex; align-items: center; gap: 16px;
+    padding: 10px 16px; border-bottom: 1px solid #dde3ec; background: #ffffff;
   }
-  #header h1 { font-size: 15px; margin: 0; }
-  #header label { font-size: 13px; color: #444; }
-  #app { display: flex; height: calc(100% - 45px); }
+  #header h1 { font-size: 15px; margin: 0; white-space: nowrap; }
+  #header label { font-size: 13px; color: #444; white-space: nowrap; }
+  #kpiStrip { display: flex; gap: 6px; }
+  .kpi-chip {
+    display: inline-flex; align-items: baseline; gap: 4px; padding: 3px 10px;
+    border-radius: 14px; font-size: 12px; font-weight: 600; color: white; white-space: nowrap;
+  }
+  .kpi-chip b { font-size: 13px; }
+  #app { display: flex; height: calc(100% - 47px); }
   #map { flex: 1; }
-  #panel { width: 400px; overflow-y: auto; padding: 16px; border-left: 1px solid #ddd; font-size: 13px; }
-  #panel h2 { font-size: 16px; margin: 0 0 8px; }
-  #panel h3 { font-size: 13px; color: #555; margin: 16px 0 6px; }
-  .grade-badge { display: inline-block; padding: 2px 8px; border-radius: 3px; color: white; font-weight: bold; }
-  .disclaimer { font-size: 11px; color: #888; margin-top: 4px; }
-  #nationalBriefing { line-height: 1.6; margin-bottom: 14px; }
-  table.farms, table.risk { width: 100%; border-collapse: collapse; font-size: 12px; }
-  table.farms th, table.farms td, table.risk th, table.risk td {
-    text-align: left; padding: 3px 4px; border-bottom: 1px solid #eee;
-  }
-  table.risk .grade-badge { padding: 1px 6px; font-size: 11px; }
+  /* 2026-08-26(4차) — 우측 패널이 세로로 너무 길다는 피드백으로 폭을 넓혀 카드를
+     2열로 배치할 여유를 준다(지도가 좁아지는 건 감수해도 된다고 확인됨). */
+  #panel { width: 680px; overflow-y: auto; padding: 12px; background: #eef1f6; font-size: 13px; }
+  .two-col-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; align-items: start; }
+  .two-col-grid .dash-card { margin-bottom: 0; }
+  .span2 { grid-column: 1 / -1; }
+  #panel h2 { font-size: 17px; margin: 0; }
+  .grade-badge { display: inline-block; padding: 2px 8px; border-radius: 3px; color: white; font-weight: bold; font-size: 12px; }
+  .disclaimer { font-size: 11px; color: #888; margin-top: 6px; line-height: 1.5; }
+  #nationalBriefing { line-height: 1.6; margin: 0; }
+  table.farms { width: 100%; border-collapse: collapse; font-size: 12px; }
+  table.farms th, table.farms td { text-align: left; padding: 3px 4px; border-bottom: 1px solid #eee; }
+  table.farms th:first-child, table.farms .farm-rank { width: 28px; text-align: center; }
+  table.farms .farm-rank { font-weight: 700; color: #2b6cb0; }
   .no-data { color: #888; font-style: italic; padding: 8px 0; }
   .legend-box {
     position: absolute; bottom: 20px; left: 20px; z-index: 1000;
@@ -34,33 +43,98 @@
   }
   #limitInput { width: 50px; }
   #backToNational {
-    display: block; margin-bottom: 10px; padding: 0; border: none; background: none;
-    color: #2b6cb0; font-size: 12px; cursor: pointer;
+    display: inline-block; padding: 0; border: none; background: none;
+    color: #2b6cb0; font-size: 12px; cursor: pointer; font-weight: 600;
   }
   #backToNational:hover { text-decoration: underline; }
   .leaflet-interactive:focus { outline: none; }
-  #tabBar { display: flex; gap: 4px; border-bottom: 1px solid #ddd; margin-bottom: 12px; }
-  .tab-btn {
-    flex: 1; padding: 7px 4px; border: none; background: none; cursor: pointer;
-    font-size: 12px; color: #666; border-bottom: 2px solid transparent;
+
+  /* 카드형 우측 패널 (2026-08-26(3차) — 관제 대시보드 재구성) */
+  .dash-card {
+    background: white; border: 1px solid #dde3ec; border-radius: 8px;
+    margin-bottom: 10px; overflow: hidden;
   }
-  .tab-btn:hover { color: #222; }
-  .tab-btn.active { color: #2b6cb0; border-bottom-color: #2b6cb0; font-weight: bold; }
-  .tab-panel h3 { margin-top: 0; }
-  #newsArea, #policyAnswerArea { line-height: 1.6; }
-  #newsArea .citations, #policyAnswerArea .sources {
-    margin-top: 10px; padding-top: 8px; border-top: 1px solid #eee; font-size: 11px; color: #666;
+  .dash-card-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 12px; font-size: 13px; font-weight: 600; color: #333;
+    background: #f7f9fc; cursor: pointer; user-select: none;
   }
-  #newsArea .citations a { display: block; margin-bottom: 3px; color: #2b6cb0; }
-  #policyQuestionInput { width: 100%; box-sizing: border-box; padding: 5px; margin-bottom: 6px; }
-  #policyAskBtn { padding: 4px 10px; cursor: pointer; }
-  #policyAnswerArea { margin-top: 12px; }
-  #policyAnswerArea .sources div { margin-bottom: 2px; }
+  .dash-card-header.static { cursor: default; }
+  .dash-card-header .chev { font-size: 10px; color: #999; transition: transform 0.15s; }
+  .dash-card.collapsed .chev { transform: rotate(-90deg); }
+  .dash-card.collapsed .dash-card-body { display: none; }
+  .dash-card-body { padding: 12px; }
+  .count-badge {
+    display: inline-block; margin-left: 4px; padding: 1px 7px; border-radius: 10px;
+    background: #e2e8f5; color: #445; font-size: 11px; font-weight: 700;
+  }
+
+  .county-header-row { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+  .county-sub { margin: 0; font-size: 12px; color: #666; }
+
+  /* 위험 지역 리스트 — 표 대신 클릭 가능한 카드 행, 패널이 넓어져 2열로 배치 */
+  #riskListArea { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 8px; }
+  .risk-row {
+    padding: 8px 10px; border: 1px solid #eef1f6; border-radius: 6px; cursor: pointer;
+  }
+  .risk-row:hover { background: #f4f7fc; border-color: #cdd8ec; }
+  .risk-row-top { display: flex; align-items: center; gap: 8px; }
+  .risk-row-top .risk-name { font-weight: 600; flex: 1; }
+  .risk-row-top .risk-dist { font-size: 11px; color: #888; }
+  .risk-row-sub { margin-top: 3px; font-size: 11px; color: #777; }
+
+  /* 체크리스트 */
+  #checklistArea ul { margin: 0; padding-left: 0; list-style: none; }
+  #checklistArea li {
+    padding: 6px 8px 6px 26px; margin-bottom: 4px; background: #fafbfd;
+    border: 1px solid #e4e8ef; border-radius: 4px; position: relative; line-height: 1.5;
+  }
+  #checklistArea li::before { content: "\2610"; position: absolute; left: 8px; color: #2b6cb0; }
+  #checklistArea .basis { display: block; margin-top: 2px; font-size: 11px; color: #888; }
+
+  /* 등급 근거 — 문장 대신 훑어보기 쉬운 키-값 행 (2026-08-26(4차)) */
+  .stat-row {
+    display: flex; justify-content: space-between; gap: 10px; padding: 5px 0;
+    border-bottom: 1px solid #f0f2f6; font-size: 12px;
+  }
+  .stat-row:last-of-type { border-bottom: none; }
+  .stat-row .stat-label { color: #888; white-space: nowrap; }
+  .stat-row .stat-value { font-weight: 600; color: #333; text-align: right; }
+  .stat-note { margin-top: 8px; font-size: 11px; color: #999; line-height: 1.5; }
+
+  /* 뉴스 — 줄글 대신 문장 단위 불릿 (2026-08-26(4차)) */
+  #countyNewsArea ul.bullet-list { margin: 0 0 10px 0; padding-left: 0; list-style: none; }
+  #countyNewsArea ul.bullet-list li {
+    position: relative; padding: 4px 0 4px 16px; line-height: 1.5; font-size: 12.5px;
+  }
+  #countyNewsArea ul.bullet-list li::before { content: "•"; position: absolute; left: 2px; color: #b8c0cc; }
+  #countyNewsArea .citations { display: flex; flex-direction: column; gap: 6px; }
+  .news-card {
+    display: block; padding: 7px 9px; background: #fafbfd; border: 1px solid #e4e8ef;
+    border-radius: 6px; text-decoration: none; color: inherit;
+  }
+  .news-card:hover { border-color: #b8c6e0; background: #f4f7fc; }
+  .news-domain {
+    display: inline-block; margin-bottom: 3px; padding: 1px 6px; border-radius: 3px;
+    background: #e2e8f5; color: #2b4a8a; font-size: 10px; font-weight: 700;
+  }
+  .news-title {
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    overflow: hidden; font-size: 12px; color: #2b6cb0; line-height: 1.4;
+  }
+  #fieldResponseArea .loading { color: #888; font-style: italic; padding: 4px 0; }
+
+  .farm-list-controls { font-size: 12px; color: #555; margin-bottom: 8px; }
 </style>
 </head>
 <body>
 <div id="header">
-  <h1>ASF 점검 우선순위 도구</h1>
+  <h1>ASF 관제 대시보드</h1>
+  <div id="kpiStrip">
+    <span class="kpi-chip" style="background:#d33f3f">심각 <b id="kpiCritical">0</b></span>
+    <span class="kpi-chip" style="background:#f4b400">주의 <b id="kpiWarning">0</b></span>
+    <span class="kpi-chip" style="background:#a5d6a7">평시 <b id="kpiNormal">0</b></span>
+  </div>
   <label>기준일(as_of): <input type="date" id="asOfInput"></label>
   <span id="refreshStatus" style="margin-left:auto; font-size:12px; color:#666;">갱신 상태 확인 중...</span>
 </div>
@@ -68,41 +142,70 @@
   <div id="map"></div>
   <div id="panel">
     <div id="panelDefault">
-      <h2>전국 브리핑</h2>
-      <p id="nationalBriefing">불러오는 중...</p>
-      <div id="tabBar">
-        <button class="tab-btn active" type="button" data-tab="risk">위험 현황</button>
-        <button class="tab-btn" type="button" data-tab="news">관련 뉴스</button>
-        <button class="tab-btn" type="button" data-tab="policy">정책 Q&amp;A</button>
+      <div class="dash-card">
+        <div class="dash-card-header static"><span>전국 브리핑</span></div>
+        <div class="dash-card-body"><p id="nationalBriefing">불러오는 중...</p></div>
       </div>
-      <div id="tabRisk" class="tab-panel">
-        <h3>위험 지역 (심각·주의)</h3>
-        <div id="riskListArea"></div>
-      </div>
-      <div id="tabNews" class="tab-panel" style="display:none;">
-        <div id="newsArea" class="no-data">탭을 열면 최신 뉴스를 불러옵니다.</div>
-      </div>
-      <div id="tabPolicy" class="tab-panel" style="display:none;">
-        <div class="disclaimer" style="margin-bottom:8px;">
-          이 답변은 방역실시요령·긴급행동지침(SOP) 검색 결과를 요약한 참고용 정보이며,
-          법적 효력이 있는 유권해석이 아닙니다. 실제 방역 조치는 반드시 관할
-          가축방역기관에 재확인하십시오.
-        </div>
-        <input type="text" id="policyQuestionInput" placeholder="예: 관리지역의 반경은 몇 미터인가요?">
-        <button id="policyAskBtn" type="button">질문하기</button>
-        <div id="policyAnswerArea"></div>
+      <div class="dash-card">
+        <div class="dash-card-header static"><span>위험 지역 (심각·주의)</span></div>
+        <div class="dash-card-body"><div id="riskListArea"></div></div>
       </div>
     </div>
     <div id="panelCounty" style="display:none;">
-      <button id="backToNational" type="button">← 전국 브리핑으로</button>
-      <h2 id="countyName"></h2>
-      <p><span id="countyGradeBadge" class="grade-badge"></span> <span id="countyDays"></span></p>
-      <p id="countyBriefing"></p>
-      <div class="disclaimer" id="countyDisclaimer"></div>
-      <h3>등급 근거</h3>
-      <p id="countyBasis"></p>
-      <h3>점검 필요 농장 리스트 <input type="number" id="limitInput" value="20" min="1" max="200"></h3>
-      <div id="farmListArea"></div>
+      <div class="two-col-grid">
+        <div class="dash-card">
+          <div class="dash-card-header static"><button id="backToNational" type="button">← 전국 브리핑으로</button></div>
+          <div class="dash-card-body">
+            <div class="county-header-row">
+              <h2 id="countyName"></h2>
+              <span id="countyGradeBadge" class="grade-badge"></span>
+            </div>
+            <p id="countyDays" class="county-sub"></p>
+          </div>
+        </div>
+
+        <div class="dash-card">
+          <div class="dash-card-header static"><span>브리핑</span></div>
+          <div class="dash-card-body">
+            <p id="countyBriefing" style="margin:0;"></p>
+            <div class="disclaimer" id="countyDisclaimer"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="dash-card" id="farmListCard">
+        <div class="dash-card-header" onclick="toggleCard(this)">
+          <span>🐷 점검 필요 농장 순위<span id="farmCountBadge" class="count-badge"></span></span>
+          <span class="chev">▾</span>
+        </div>
+        <div class="dash-card-body">
+          <div class="farm-list-controls">표시 개수 <input type="number" id="limitInput" value="20" min="1" max="200"></div>
+          <div id="farmListArea"></div>
+        </div>
+      </div>
+
+      <div id="fieldResponseArea" class="two-col-grid" style="display:none;">
+        <div class="dash-card" id="checklistCard">
+          <div class="dash-card-header" onclick="toggleCard(this)">
+            <span>📋 현장 대응 체크리스트</span><span class="chev">▾</span>
+          </div>
+          <div class="dash-card-body"><div id="checklistArea"></div></div>
+        </div>
+        <div class="dash-card" id="newsCard">
+          <div class="dash-card-header" onclick="toggleCard(this)">
+            <span>📰 최근 관련 뉴스</span><span class="chev">▾</span>
+          </div>
+          <div class="dash-card-body"><div id="countyNewsArea"></div></div>
+        </div>
+        <div class="disclaimer span2" id="fieldResponseDisclaimer" style="margin: -2px 4px 0;"></div>
+      </div>
+
+      <div class="dash-card collapsed" id="basisCard">
+        <div class="dash-card-header" onclick="toggleCard(this)">
+          <span>등급 근거</span><span class="chev">▾</span>
+        </div>
+        <div class="dash-card-body"><div id="countyBasis"></div></div>
+      </div>
     </div>
   </div>
 </div>
@@ -128,6 +231,21 @@ function todayStr() {
 }
 function asOfParam() {
   return document.getElementById("asOfInput").value.replaceAll("-", "");
+}
+
+// 카드 헤더 클릭 시 접기/펼치기(관제 대시보드 카드 컴포넌트 공용 함수)
+function toggleCard(headerEl) {
+  headerEl.closest(".dash-card").classList.toggle("collapsed");
+}
+
+// 위험 지역 카드를 눌러 시군을 선택했을 때(지도를 직접 안 봐도) 그 시군이 어디인지
+// 바로 보이도록 지도를 이동·확대한다(2026-08-26(5차) 피드백). 지도 클릭으로 선택한
+// 경우도 같은 함수를 타므로 동작이 일관된다.
+function focusMapOnCounty(code) {
+  const feature = boundaryFeaturesByCode[code];
+  if (!feature) return;
+  const bounds = L.geoJSON(feature).getBounds();
+  map.flyToBounds(bounds, { padding: [60, 60], maxZoom: 11, duration: 0.6 });
 }
 
 function styleForFeature(feature) {
@@ -270,11 +388,20 @@ function loadRefreshStatus() {
   });
 }
 
+function renderKpiStrip(grades) {
+  const counts = { "심각": 0, "주의": 0, "평시": 0 };
+  for (const g of Object.values(grades)) counts[g.grade]++;
+  document.getElementById("kpiCritical").textContent = counts["심각"];
+  document.getElementById("kpiWarning").textContent = counts["주의"];
+  document.getElementById("kpiNormal").textContent = counts["평시"];
+}
+
 function loadGrades() {
   const asOf = asOfParam();
   return fetch(`/pipeline/run?as_of=${asOf}`).then(r => r.json()).then(data => {
     gradesByCode = data.grades;
     if (geoJsonLayer) geoJsonLayer.eachLayer(layer => layer.setStyle(styleForFeature(layer.feature)));
+    renderKpiStrip(data.grades);
     document.getElementById("nationalBriefing").textContent = data.briefing.text;
     renderRiskList(data.risk_list);
     return data;
@@ -293,38 +420,153 @@ function renderRiskList(riskList) {
     area.innerHTML = '<div class="no-data">현재 심각·주의 등급 시군 없음</div>';
     return;
   }
-  let html = '<table class="risk"><tr><th>시군</th><th>등급</th><th>최근 발생</th><th>등록 농장</th><th>사육두수</th></tr>';
+  let html = "";
   for (const r of riskList) {
     const badge = `<span class="grade-badge" style="background:${GRADE_COLOR[r.grade]}">${r.grade}</span>`;
-    const farmCount = r.farm_count > 0 ? `${r.farm_count}개` : "미확보";
+    const farmCount = r.farm_count > 0 ? `농장 ${r.farm_count}개` : "농장 미확보";
     const livestock = r.livestock_count === null
-      ? "결측"
+      ? "사육두수 결측"
       : `${r.livestock_count.toLocaleString()}두(${r.livestock_year})`;
-    html += `<tr><td>${r.name}</td><td>${badge}</td>` +
-      `<td>${r.recent_case_count}건 (${r.nearest_distance_km}km)</td>` +
-      `<td>${farmCount}</td><td>${livestock}</td></tr>`;
+    html += `<div class="risk-row" data-code="${r.code}">` +
+      `<div class="risk-row-top">${badge}<span class="risk-name">${r.name}</span><span class="risk-dist">${r.nearest_distance_km}km</span></div>` +
+      `<div class="risk-row-sub">최근 발생 ${r.recent_case_count}건 · ${farmCount} · ${livestock}</div></div>`;
   }
-  html += "</table>";
   area.innerHTML = html;
+}
+
+// 위험 지역 카드 클릭 시 해당 시군으로 드릴다운(이벤트 위임 — innerHTML로 다시 그려도
+// #riskListArea 자체는 그대로라 리스너를 매번 다시 달 필요 없음)
+document.getElementById("riskListArea").addEventListener("click", e => {
+  const row = e.target.closest(".risk-row");
+  if (row) selectCounty(row.dataset.code);
+});
+
+// 등급 근거를 한 문장이 아니라 훑어보기 쉬운 키-값 행으로 보여준다(2026-08-26(4차) 피드백).
+function renderBasis(nearestCaseBasis) {
+  const area = document.getElementById("countyBasis");
+  if (!nearestCaseBasis) {
+    area.innerHTML = '<div class="no-data">최근 3주 안에 이 시군 경계로부터 20km 이내에서 발생한 사례가 없습니다.</div>';
+    return;
+  }
+  const b = nearestCaseBasis;
+  area.innerHTML =
+    `<div class="stat-row"><span class="stat-label">가장 가까운 최근 발생</span><span class="stat-value">${b.address}</span></div>` +
+    `<div class="stat-row"><span class="stat-label">거리</span><span class="stat-value">${b.distance_km}km (시군 경계 기준)</span></div>` +
+    `<div class="stat-row"><span class="stat-label">경과</span><span class="stat-value">${b.days_since}일 전</span></div>` +
+    `<div class="stat-note">${b.note}</div>`;
 }
 
 function renderFarmList(status, farmsList) {
   const area = document.getElementById("farmListArea");
+  const badge = document.getElementById("farmCountBadge");
   if (status === "no_farm_data") {
+    badge.textContent = "";
     area.innerHTML = '<div class="no-data">농장 데이터 미확보</div>';
     return;
   }
+  badge.textContent = farmsList.length;
   if (farmsList.length === 0) {
     area.innerHTML = '<div class="no-data">조건에 맞는 농장 없음 (최근 3주 내 10km 이내 발생 없음)</div>';
     return;
   }
-  let html = '<table class="farms"><tr><th>농장명</th><th>거리</th><th>사육두수</th></tr>';
-  for (const f of farmsList) {
+  let html = '<table class="farms"><tr><th>순위</th><th>농장명</th><th>거리</th><th>사육두수</th></tr>';
+  farmsList.forEach((f, i) => {
     const head = f["사육두수"] === null ? "미상" : f["사육두수"].toLocaleString();
-    html += `<tr><td>${f.farm_name || "(미상)"}</td><td>${f.distance_km}km</td><td>${head}</td></tr>`;
-  }
+    html += `<tr><td class="farm-rank">${i + 1}</td><td>${f.farm_name || "(미상)"}</td><td>${f.distance_km}km</td><td>${head}</td></tr>`;
+  });
   html += "</table>";
   area.innerHTML = html;
+}
+
+function renderChecklist(text) {
+  const area = document.getElementById("checklistArea");
+  const items = text.split("\n").map(l => l.trim()).filter(l => l.startsWith("-"));
+  if (items.length === 0) {
+    area.innerHTML = `<div class="no-data">${text || "체크리스트를 불러오지 못했습니다."}</div>`;
+    return;
+  }
+  let html = "<ul>";
+  for (const line of items) {
+    const body = line.replace(/^-+\s*/, "");
+    const m = body.match(/^(.*?)(\(근거:.*\))\s*$/);
+    if (m) {
+      html += `<li>${m[1].trim()}<span class="basis">${m[2]}</span></li>`;
+    } else {
+      html += `<li>${body}</li>`;
+    }
+  }
+  html += "</ul>";
+  area.innerHTML = html;
+}
+
+function newsDomain(url) {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch (e) {
+    return url;
+  }
+}
+
+// web_search 툴을 쓴 응답의 output_text에는 "...입니다. ([domain.com](url))"처럼
+// 인용이 마크다운 링크 형태로 문장 안에 그대로 섞여 나온다(실측 확인, 프롬프트로
+// "마크다운 금지"를 지시해도 이 citation 표기는 안 없어짐) — 아래 .citations 카드로
+// 이미 따로 보여주므로 본문 문장에서는 지저분한 원본 링크 텍스트를 제거한다.
+function stripInlineCitations(text) {
+  return text.replace(/\s*\(\[[^\]]+\]\([^)]+\)\)/g, "");
+}
+
+// 긴 줄글보다 문장 단위 불릿이 더 훑어보기 쉽다는 피드백(2026-08-26(4차))으로,
+// 마침표/물음표/느낌표 뒤에서 문장을 잘라 목록으로 보여준다.
+function splitSentences(text) {
+  const parts = text.match(/[^.!?]+[.!?]+\s*/g);
+  return (parts && parts.length > 0 ? parts : [text]).map(s => s.trim()).filter(Boolean);
+}
+
+function renderCountyNews(text, citations) {
+  const area = document.getElementById("countyNewsArea");
+  const sentences = splitSentences(stripInlineCitations(text));
+  let html = "<ul class=\"bullet-list\">" + sentences.map(s => `<li>${s}</li>`).join("") + "</ul>";
+  if (citations && citations.length > 0) {
+    html += '<div class="citations">';
+    for (const c of citations) {
+      html += `<a class="news-card" href="${c.url}" target="_blank" rel="noopener">` +
+        `<span class="news-domain">${newsDomain(c.url)}</span>` +
+        `<span class="news-title">${c.title}</span></a>`;
+    }
+    html += "</div>";
+  }
+  area.innerHTML = html;
+}
+
+function loadFieldResponse(code, asOf) {
+  const area = document.getElementById("fieldResponseArea");
+  area.style.display = "grid"; // .two-col-grid — "block"으로 두면 인라인 스타일이 클래스의 grid를 덮어써 1열로 무너짐
+  document.getElementById("checklistArea").innerHTML = '<div class="loading">체크리스트 생성 중... (최대 20초 정도 걸릴 수 있습니다)</div>';
+  document.getElementById("countyNewsArea").innerHTML = '<div class="loading">뉴스 검색 중...</div>';
+  document.getElementById("fieldResponseDisclaimer").textContent = "";
+
+  fetch(`/sigun/${code}/field_response?as_of=${asOf}`).then(r => r.json()).then(data => {
+    if (!data.applicable) {
+      area.style.display = "none";
+      return;
+    }
+    renderChecklist(data.checklist_text);
+    renderCountyNews(data.news_text, data.news_citations);
+    document.getElementById("fieldResponseDisclaimer").textContent = data.disclaimer;
+  }).catch(() => {
+    document.getElementById("checklistArea").innerHTML = '<div class="no-data">체크리스트를 불러오지 못했습니다.</div>';
+    document.getElementById("countyNewsArea").innerHTML = '<div class="no-data">뉴스를 불러오지 못했습니다.</div>';
+  });
+}
+
+// 시군을 바꿀 때마다 카드 펼침 상태를 기본값으로 되돌린다 — 점검 필요 농장 순위는
+// 이 도구의 핵심 산출물이라 항상 펼침(2026-08-26(5차) 피드백으로 최상단 근처로 이동),
+// 체크리스트/뉴스도 펼침, 등급 근거만 접힘(가장 부차적인 설명 정보).
+function resetCardStates() {
+  document.getElementById("farmListCard").classList.remove("collapsed");
+  document.getElementById("checklistCard").classList.remove("collapsed");
+  document.getElementById("newsCard").classList.remove("collapsed");
+  document.getElementById("basisCard").classList.add("collapsed");
 }
 
 function selectCounty(code) {
@@ -338,29 +580,34 @@ function selectCounty(code) {
     // 선택된 레이어를 같은 pane 안에서 맨 위로 올린다.
     if (l.feature.properties.code === code) l.bringToFront();
   });
+  focusMapOnCounty(code);
 
   document.getElementById("panelDefault").style.display = "none";
   document.getElementById("panelCounty").style.display = "block";
+  resetCardStates();
 
   const asOf = asOfParam();
   const limit = document.getElementById("limitInput").value || 20;
+
+  // 등급은 전국 브리핑 로드 때 이미 gradesByCode에 있으므로, /sigun/{code} 응답을
+  // 기다리지 않고 평시가 아니면 바로 체크리스트/뉴스 fetch를 동시에 시작한다
+  // (web_search+RAG라 레이턴시가 커서, 순차로 하면 체감 대기시간이 그만큼 늘어난다).
+  const grade = gradesByCode[code] && gradesByCode[code].grade;
+  if (grade && grade !== "평시") {
+    loadFieldResponse(code, asOf);
+  } else {
+    document.getElementById("fieldResponseArea").style.display = "none";
+  }
+
   fetch(`/sigun/${code}?as_of=${asOf}&limit=${limit}`).then(r => r.json()).then(data => {
     document.getElementById("countyName").textContent = data.name;
     setGradeBadge(data.grade.grade);
     document.getElementById("countyDays").textContent =
-      data.grade.days_since_last === null ? "(최근 3주 내 근거가 되는 발생 없음)" : `가장 가까운 최근 발생: ${data.grade.days_since_last}일 전`;
+      data.grade.days_since_last === null ? "최근 3주 내 근거가 되는 발생 없음" : `가장 가까운 최근 발생: ${data.grade.days_since_last}일 전`;
     document.getElementById("countyBriefing").textContent = data.briefing.text;
     document.getElementById("countyDisclaimer").textContent = data.briefing.disclaimer;
 
-    if (data.nearest_case_basis) {
-      const b = data.nearest_case_basis;
-      document.getElementById("countyBasis").textContent =
-        `가장 가까운 최근 발생: ${b.address} (이 시군 경계로부터 ${b.distance_km}km, ${b.days_since}일 전). ${b.note}`;
-    } else {
-      document.getElementById("countyBasis").textContent =
-        "최근 3주 안에 이 시군 경계로부터 20km 이내에서 발생한 사례가 없습니다.";
-    }
-
+    renderBasis(data.nearest_case_basis);
     renderFarmList(data.farm_status, data.farms);
   });
 }
@@ -379,71 +626,8 @@ function deselectCounty() {
 
 document.getElementById("backToNational").addEventListener("click", deselectCounty);
 
-// 뉴스 탭: web_search라 느리고(수 초~십수 초) 비용도 들어서 처음 클릭할 때만 불러오고,
-// 페이지 로드/날짜 변경마다 자동 호출하지 않는다. as_of가 바뀌면 이 값을 지워서
-// 다음 클릭 때 다시 불러오게만 한다(그 자리에서 바로 재호출하지 않음).
-let newsLoadedAsOf = null;
-
-function switchTab(name) {
-  document.querySelectorAll(".tab-btn").forEach(btn => btn.classList.toggle("active", btn.dataset.tab === name));
-  document.getElementById("tabRisk").style.display = name === "risk" ? "block" : "none";
-  document.getElementById("tabNews").style.display = name === "news" ? "block" : "none";
-  document.getElementById("tabPolicy").style.display = name === "policy" ? "block" : "none";
-  if (name === "news" && newsLoadedAsOf !== asOfParam()) loadNews();
-}
-
-function loadNews() {
-  const asOf = asOfParam();
-  const area = document.getElementById("newsArea");
-  area.innerHTML = '<div class="no-data">뉴스 검색 중... (최대 십수 초 걸릴 수 있습니다)</div>';
-  fetch(`/news?as_of=${asOf}`).then(r => r.json()).then(data => {
-    newsLoadedAsOf = asOf;
-    let html = `<p>${data.text}</p>`;
-    if (data.citations && data.citations.length > 0) {
-      html += '<div class="citations">';
-      for (const c of data.citations) {
-        html += `<a href="${c.url}" target="_blank" rel="noopener">${c.title}</a>`;
-      }
-      html += "</div>";
-    }
-    html += `<div class="disclaimer">${data.disclaimer}</div>`;
-    area.innerHTML = html;
-  }).catch(() => {
-    area.innerHTML = '<div class="no-data">뉴스를 불러오지 못했습니다.</div>';
-  });
-}
-
-function askPolicy() {
-  const q = document.getElementById("policyQuestionInput").value.trim();
-  if (!q) return;
-  const area = document.getElementById("policyAnswerArea");
-  area.innerHTML = '<div class="no-data">검색 중...</div>';
-  fetch(`/policy/ask?q=${encodeURIComponent(q)}`).then(r => r.json()).then(data => {
-    let html = `<p>${data.answer}</p>`;
-    if (data.sources && data.sources.length > 0) {
-      html += '<div class="sources">';
-      for (const s of data.sources) {
-        html += `<div>[${s.source_file}${s.article_no ? " " + s.article_no : ""}] ${s.title}</div>`;
-      }
-      html += "</div>";
-    }
-    area.innerHTML = html;
-  }).catch(() => {
-    area.innerHTML = '<div class="no-data">답변을 불러오지 못했습니다.</div>';
-  });
-}
-
-document.querySelectorAll(".tab-btn").forEach(btn => {
-  btn.addEventListener("click", () => switchTab(btn.dataset.tab));
-});
-document.getElementById("policyAskBtn").addEventListener("click", askPolicy);
-document.getElementById("policyQuestionInput").addEventListener("keydown", e => {
-  if (e.key === "Enter") askPolicy();
-});
-
 document.getElementById("asOfInput").addEventListener("change", () => {
   renderOutbreaks();
-  newsLoadedAsOf = null;
   loadGrades().then(() => {
     loadRefreshStatus();
     if (selectedCode) selectCounty(selectedCode);

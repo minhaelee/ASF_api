@@ -1,13 +1,13 @@
-"""ASF v3 — 뉴스 기능(2026-08-26 피드백). OpenAI Responses API 내장 web_search 툴을
-쓴다 — 새 API 키/새 서비스 계정 불필요, 기존 OPENAI_API_KEY 그대로 재사용.
+"""ASF v3 — 뉴스 기능. OpenAI Responses API 내장 web_search 툴을 쓴다 — 새 API 키/새
+서비스 계정 불필요, 기존 OPENAI_API_KEY 그대로 재사용.
 
-전국 단위만 지원한다(시군별 개별 뉴스는 범위 밖 — app/policy_rag.py처럼 이 프로젝트
-전체가 "판정/표시 계층 분리" 원칙을 지키므로, 이 모듈도 grade()/build_risk_list()가
-이미 계산한 risk_list를 입력으로만 받을 뿐 등급을 다시 계산하지 않는다.
+2026-08-26(2차) 피드백으로 용도가 바뀌었다: 처음엔 전국 risk_list 전체를 한 번에
+요약하는 국가 단위 기능이었는데, "시군을 클릭하면 그 시군에 대한 뉴스가 자동으로
+나와야 한다"는 정정에 따라 시군 1곳 단위로 좁혔다(app/field_response.py가 이 모듈과
+app/policy_rag.py를 같이 호출해 시군별 현장 대응 체크리스트를 만든다).
 
-risk_list가 비어 있으면(전국 평시) OpenAI를 아예 호출하지 않는다 — web_search 호출은
-이 프로젝트에서 가장 느리고(수 초~십수 초) 비용이 드는 호출이라, 검색할 위험 지역
-자체가 없을 때 부르는 건 낭비다.
+이 모듈 자체는 등급을 계산하지 않는다 — grade()/build_risk_list()가 이미 계산한
+grade_info를 입력으로만 받는다("판정/표시 계층 분리" 원칙, app/policy_rag.py와 동일).
 """
 
 import sys
@@ -20,21 +20,6 @@ NEWS_DISCLAIMER = (
     "뉴스 검색은 실제 웹 검색 결과에 기반하며, 오래되었거나 소규모인 발생은 보도가 "
     "거의 없을 수 있습니다. 이 요약은 참고용이며 정식 발생현황 공고를 대체하지 않습니다."
 )
-
-NO_RISK_TEXT = "현재 심각·주의 등급 시군이 없어 검색할 위험 지역이 없습니다."
-
-_NEWS_CACHE: dict[str, dict] = {}
-
-
-def build_news_query_context(as_of: str, risk_list: list[dict]) -> str:
-    """순수 함수, LLM 미사용 — risk_list 상위 항목으로 검색 프롬프트용 텍스트를 만든다."""
-    lines = [f"기준일(as_of): {as_of}", "", "현재 심각/주의 등급 시군:"]
-    for r in risk_list:
-        lines.append(
-            f"- {r['name']} ({r['grade']}, 최근 발생 {r['recent_case_count']}건, "
-            f"발생지에서 {r['nearest_distance_km']}km, {r['days_since_last']}일 전)"
-        )
-    return "\n".join(lines)
 
 
 def _extract_citations(response) -> list[dict]:
@@ -52,37 +37,36 @@ def _extract_citations(response) -> list[dict]:
     return citations
 
 
-def generate_news_briefing(as_of: str, risk_list: list[dict]) -> dict:
-    """반환: {"as_of", "text", "citations": [{"url","title"}],
-              "has_risk_counties": bool, "disclaimer": NEWS_DISCLAIMER}"""
-    if not risk_list:
-        return {
-            "as_of": as_of,
-            "text": NO_RISK_TEXT,
-            "citations": [],
-            "has_risk_counties": False,
-            "disclaimer": NEWS_DISCLAIMER,
-        }
-
-    cached = _NEWS_CACHE.get(as_of)
-    if cached is not None:
-        return cached
-
+def generate_county_news_briefing(name: str, grade_info: dict, nearest_case_basis: dict | None) -> dict:
+    """시군 하나에 대한 뉴스 요약. 반환: {"text", "citations": [{"url","title"}],
+    "disclaimer": NEWS_DISCLAIMER}"""
     if not OPENAI_API_KEY:
         sys.exit("OPENAI_API_KEY 환경변수가 없습니다. .env를 확인하세요.")
 
-    client = OpenAI(api_key=OPENAI_API_KEY)
-    context = build_news_query_context(as_of, risk_list)
+    if nearest_case_basis is None:
+        case_line = "최근 3주 내 시군 경계 20km 이내 발생 없음"
+    else:
+        case_line = (
+            f"가장 가까운 최근 발생: {nearest_case_basis['address']} "
+            f"({nearest_case_basis['distance_km']}km, {nearest_case_basis['days_since']}일 전)"
+        )
+    context = f"시군: {name}\n등급: {grade_info['grade']}\n{case_line}"
 
     instructions = (
-        "너는 ASF(아프리카돼지열병) 방역 담당 공무원을 위해 최근 관련 뉴스를 요약한다. "
-        "web_search로 실제로 찾은 내용만 근거로 삼아라 — 검색 결과에 없는 사실을 추정하거나 "
-        "지어내지 마라. 각 항목은 반드시 실제 출처와 함께 제시하라. 오래되었거나 소규모인 "
-        "발생은 언론 보도가 거의 없을 수 있다 — 그런 경우 관련 보도를 찾지 못했다고 명시하고 "
-        "없는 뉴스를 지어내지 마라. 기준일(as_of) 이후에 나온 것으로 보이는(미래 시점) 결과는 "
-        "인용하지 마라. 3~5문장의 간결한 한국어로, 마크다운 문법 없이 순수 텍스트로 작성하라."
+        "너는 ASF(아프리카돼지열병) 방역 담당 공무원을 위해 특정 시군과 관련된 최근 뉴스를 "
+        "자동으로 요약해 화면에 띄우는 시스템이다. 이 글은 사용자가 직접 입력한 질문에 "
+        "대한 답변이 아니라 시군 클릭 시 자동 생성되는 상황 보고문이다 — '사용자께서 "
+        "제시하신/요청하신', '말씀하신' 같은 표현이나 '제가 찾은/검색해본 결과' 같은 "
+        "1인칭 표현을 절대 쓰지 말고, 객관적인 보고 문장으로만 서술하라(예: '~라는 보도가"
+        "확인됩니다', '~에 대한 보도는 확인되지 않았습니다'). web_search로 실제로 찾은 "
+        "내용만 근거로 삼아라 — 검색 결과에 없는 사실을 추정하거나 지어내지 마라. 각 항목은 "
+        "반드시 실제 출처와 함께 제시하라. 오래되었거나 소규모인 발생은 언론 보도가 거의 "
+        "없을 수 있다 — 그런 경우 관련 보도를 찾지 못했다고 명시하고 없는 뉴스를 지어내지 "
+        "마라. 미래 시점으로 보이는 결과는 인용하지 마라. 정중한 존댓말(합니다체)로, 2~4문장의 "
+        "간결한 한국어로, 마크다운 문법 없이 순수 텍스트로 작성하라."
     )
 
+    client = OpenAI(api_key=OPENAI_API_KEY)
     resp = client.responses.create(
         model=OPENAI_BRIEFING_MODEL,
         instructions=instructions,
@@ -91,28 +75,20 @@ def generate_news_briefing(as_of: str, risk_list: list[dict]) -> dict:
         include=["web_search_call.action.sources"],
     )
 
-    result = {
-        "as_of": as_of,
+    return {
         "text": resp.output_text,
         "citations": _extract_citations(resp),
-        "has_risk_counties": True,
         "disclaimer": NEWS_DISCLAIMER,
     }
-    _NEWS_CACHE[as_of] = result
-    return result
 
 
 if __name__ == "__main__":
     sys.stdout.reconfigure(encoding="utf-8")
-    from app.grade import grade
-    from app.geo_normalize import all_sgg_codes
-    from app.briefing import build_risk_list
 
-    as_of = "20260320"
-    grades = {code: grade(code, as_of) for code in all_sgg_codes()}
-    risk_list = build_risk_list(as_of, grades)
-    print(f"risk_list count: {len(risk_list)}")
-    result = generate_news_briefing(as_of, risk_list)
+    # 발생 마스터 CSV의 실제 케이스(78차=산청군 20260316)와 맞아떨어지는 날짜로 확인한다.
+    grade_info = {"grade": "심각"}
+    nearest_case_basis = {"address": "경남 산청군", "distance_km": 0.0, "days_since": 4}
+    result = generate_county_news_briefing("경남 산청군", grade_info, nearest_case_basis)
     print(result["text"])
     print()
     print("citations:", result["citations"])
