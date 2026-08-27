@@ -278,8 +278,12 @@ function styleForFeature(feature) {
 
 function initMap() {
   map = L.map("map").setView([36.4, 127.9], 7);
-  L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
-    attribution: "CARTO / OpenStreetMap",
+  // 2026-08-27: CARTO가 무료 익명 타일 접근에 API 키를 요구하도록 정책을 바꿔
+  // "API KEY REQUIRED" 워터마크가 뜨기 시작했다 — 키 등록 없이 쓸 수 있는 OSM 표준
+  // 타일로 교체.
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    attribution: "OpenStreetMap contributors",
+    subdomains: "abc",
   }).addTo(map);
   // 시군 색칠 레이어(overlayPane, z=400)가 나중에 로드되면 발생 원을 덮어버리는 문제가
   // 있었다 — 로드 순서와 무관하게 항상 위에 그려지도록 전용 pane을 둔다.
